@@ -1,0 +1,186 @@
+---
+title: "Figure 5"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+params:
+  pbmc_rds: "../data/intermediate/20250919_pbmc_reproduced.rds"
+  de_dir: "../data/intermediate/de_results"
+  output_dir: "../output/Fig5"
+date: "`r Sys.Date()`"
+---
+
+Reproduces Figure 5, panels A-H (the scRNA-seq/pseudobulk panels; panels I-J
+are an in vivo rat peritonitis experiment, out of scope for this repo).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(ggplot2)
+  library(patchwork)
+  library(tmod)
+})
+source("../R/plot_theme.R")
+source("../R/io_helpers.R")
+source("../R/panel_helpers.R")
+
+require_files(c(pbmc_rds = params$pbmc_rds))
+sobj <- readRDS(params$pbmc_rds)
+de <- load_de_results(params$de_dir)
+res_by_contrast <- de$by_contrast
+long_res <- de$long
+```
+
+## A - UMAP by cell type
+
+```{r panel A, fig.width=4, fig.height=3}
+panel_a <- DimPlot(sobj, group.by = "predicted.celltype.l1", reduction = "umap",
+                    label = TRUE, repel = TRUE, label.size = 3) +
+  NoLegend() + ggtitle("") +
+  theme(axis.text = element_text(size = panel_theme_size), axis.title = element_text(size = panel_theme_size))
+panel_a
+
+data_a <- sobj[[]] %>% select(sample, treatment, predicted.celltype.l1) %>%
+  cbind(Embeddings(sobj, "umap")) %>% tibble::rownames_to_column("cell")
+```
+
+## B - DE gene counts per cell type, all contrasts
+
+```{r panel B, fig.width=8, fig.height=3}
+panel_b <- deg_count_bar(long_res)
+panel_b
+
+data_b <- long_res %>% filter(!grepl("DEPRECATED", gene_name), !grepl("^ENSG", gene_name), padj < 0.05, cell_type != "all") %>%
+  count(cell_type, contrast, name = "n_de_genes")
+```
+
+## C-E - Monocyte volcano plots, Cl_vs_UM / I_vs_UM / Cl_vs_I
+
+```{r panel CDE, fig.width=8, fig.height=3}
+# volcano_panel() hides its own legend by default (legend.position="none",
+# shared with SFig13 B's use of the same function) since the paper shows one
+# shared padj<0.05 legend for the whole 3-panel row instead of one per
+# panel. Turn panel_c's legend back on and let plot_layout(guides="collect")
+# gather it once for all three - panel_d/e are left as-is (no legend) so
+# nothing gets duplicated.
+panel_c <- volcano_panel(res_by_contrast, "Cl_vs_UM", "Mono", max_overlaps = 30) +
+  theme(legend.position = "right",
+        legend.text=element_text(size=8),
+        legend.title=element_text(size=8)) +
+  guides(colour = guide_legend(title = "padj < 0.05"))
+panel_d <- volcano_panel(res_by_contrast, "I_vs_UM", "Mono", max_overlaps = 30)
+panel_e <- volcano_panel(res_by_contrast, "Cl_vs_I", "Mono", max_overlaps = 80)
+panel_cde <- (panel_c | panel_d | panel_e) + plot_layout(guides = "collect")
+panel_cde
+
+mono_sig <- function(contrast) res_by_contrast[[contrast]] %>% filter(!is.na(padj), baseMean > 5, cell_type == "Mono")
+data_c <- mono_sig("Cl_vs_UM")
+data_d <- mono_sig("I_vs_UM")
+data_e <- mono_sig("Cl_vs_I")
+```
+
+## F - tmod enrichment, monocytes, Cl_vs_UM / I_vs_UM / Cl_vs_I
+
+```{r panel F, fig.width=8, fig.height=6}
+data(tmod)
+
+f_contrasts <- c("Cl_vs_UM", "I_vs_UM", "Cl_vs_I")
+d <- long_res %>% filter(baseMean > 5, cell_type == "Mono", contrast %in% f_contrasts)
+l <- split(d, factor(contrast_labels_2lines[d$contrast], levels = contrast_labels_2lines[f_contrasts]))
+
+genes <- lapply(l, function(x) x %>% filter(!is.na(padj)) %>% arrange(pvalue))
+lgenes <- lapply(genes, function(x) x$gene_name)
+res.tmod <- lapply(lgenes, tmodCERNOtest, mset = tmod)
+sgenes <- sapply(l, function(x) tmodDecideTests(x$gene_name, lfc = x$log2FoldChange, pval = x$padj,
+                                                  lfc.thr = 0, pval.thr = 0.05, mset = tmod))
+names(sgenes) <- names(l)
+
+# a handful of near-duplicate/low-informative BTM modules excluded, as in the original analysis
+filter_ids <- c("LI.S11", "LI.M89.1", "LI.M61.2", "LI.M7.3", "LI.M7.0", "DC.M4.1", "LI.M25", "DC.M3.6", "LI.M7.2")
+res.tmod.f <- lapply(res.tmod, function(x) x %>% filter(!ID %in% filter_ids, N1 > 5, N1 < 200))
+
+panel_f <- ggPanelplot(res.tmod.f, sgenes = sgenes, auc_thr = 0, q_thr = 1,
+                        filter_row_q = 5e-4, filter_row_auc = 0.7, q_cutoff = 1e-12,
+                        label_angle = 0, add_ids = FALSE, mset = tmod, cluster = TRUE) +
+  theme(axis.text = element_text(size = panel_theme_size), strip.text = element_text(size = panel_theme_size),
+        legend.text = element_text(size = panel_theme_size), legend.title = element_text(size = panel_theme_size),
+        axis.title = element_text(size = panel_theme_size), strip.text.x = element_text(hjust = 0),
+        axis.text.x = element_text(angle = 0), panel.background = element_blank(),
+        legend.key.size = unit(.1, "in")) +
+  guides(alpha = guide_legend(ncol = 1))
+panel_f
+
+# Mirrors ggPanelplot()'s filter_row_q/filter_row_auc row selection above (a
+# module is kept, across every contrast column, if it passes the threshold
+# in at least one contrast) - res.tmod.f itself is pre-ggPanelplot data, so
+# exporting it directly would include every tested module, not just the ones
+# that actually pass filter_row_q/filter_row_auc and get drawn as heatmap
+# rows.
+combined_f <- Map(cbind, res.tmod.f, contrast = names(res.tmod.f)) %>% bind_rows()
+keep_ids_f <- combined_f %>% filter(adj.P.Val < 5e-4, AUC > 0.7) %>% pull(ID) %>% unique()
+data_f <- combined_f %>% filter(ID %in% keep_ids_f)
+```
+
+## G-H - Monocyte chemokine-cluster scatter, ClY21-HNP1 / IY16-HNP1 vs vehicle
+
+Genes highlighted (red dots + labels) belong to the manuscript's "chemokine
+cluster (II)" (see Results text): ANXA1, CXCL5, CCL7, CCR1, CCL2.
+
+```{r panel GH, fig.width=3, fig.height=3}
+chemokine_cluster_ii <- c("ANXA1", "CXCL5", "CCL7", "CCR1", "CCL2")
+
+panel_g <- concordance_scatter(res_by_contrast, "UM_vs_X", "Cl_vs_X", "Mono",
+                                style = "highlight", highlight_genes = chemokine_cluster_ii,
+                                title = "Monocytes", xlab = "log2FC HNP1 vs vehicle", ylab = "log2FC ClY21-HNP1 vs vehicle")
+panel_h <- concordance_scatter(res_by_contrast, "UM_vs_X", "I_vs_X", "Mono",
+                                style = "highlight", highlight_genes = chemokine_cluster_ii,
+                                title = "Monocytes", xlab = "log2FC HNP1 vs vehicle", ylab = "log2FC IY16-HNP1 vs vehicle")
+panel_g | panel_h
+
+scatter_data <- function(contrast_x, contrast_y) {
+  # Matches concordance_scatter()'s own filtering (R/panel_helpers.R) so the
+  # exported table is exactly the set of genes shown in the plot, not every
+  # gene DESeq2 tested - drop deprecated/Ensembl-ID fallback names, and keep
+  # only genes significant in at least one of the two contrasts.
+  inner_join(
+    res_by_contrast[[contrast_x]] %>% filter(cell_type == "Mono") %>% select(gene_name, log2FC_x = log2FoldChange, padj_x = padj),
+    res_by_contrast[[contrast_y]] %>% filter(cell_type == "Mono") %>% select(gene_name, log2FC_y = log2FoldChange, padj_y = padj),
+    by = "gene_name"
+  ) %>%
+    filter(!grepl("DEPRECATED", gene_name), !grepl("^ENSG", gene_name)) %>%
+    filter((!is.na(padj_x) & padj_x < 0.05) | (!is.na(padj_y) & padj_y < 0.05)) %>%
+    mutate(chemokine_cluster_ii = gene_name %in% chemokine_cluster_ii)
+}
+data_g <- scatter_data("UM_vs_X", "Cl_vs_X")
+data_h <- scatter_data("UM_vs_X", "I_vs_X")
+```
+
+## Assembly
+
+```{r assembly, fig.width=8, fig.height=11}
+fig5 <- ((panel_a) + (panel_b) + plot_layout(widths=c(0.5,1))) /
+  wrap_elements(panel_cde) /
+  (wrap_elements(panel_f)) /
+  (wrap_elements(panel_g) + wrap_elements(panel_h) + plot_spacer()) +
+  plot_layout(heights = c(1.2, 1.5, 2,1.5)) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 8, face = "bold", hjust = -.5, vjust = 0))
+fig5
+```
+
+```{r save}
+save_figure_pdf(fig5, file.path(params$output_dir, "Fig5.pdf"), width = 8, height = 11)
+write_panel_xlsx(
+  list(A_umap_celltype = data_a, B_deg_counts = data_b, C_volcano_ClvsUM_Mono = data_c,
+       D_volcano_IvsUM_Mono = data_d, E_volcano_ClvsI_Mono = data_e, F_tmod_Mono = data_f,
+       G_scatter_ClvsX_Mono = data_g, H_scatter_IvsX_Mono = data_h),
+  file.path(params$output_dir, "Fig5_data.xlsx")
+)
+```
+
+```{r session info}
+sessionInfo()
+```

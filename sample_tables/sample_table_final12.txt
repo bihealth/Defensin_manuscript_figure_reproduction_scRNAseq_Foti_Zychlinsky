@@ -1,0 +1,13 @@
+sample	treatment	group	batch	barcode
+s1_1	X	X	1	BC001
+s1_2	UM	UM	1	BC002
+s1_3	Cl	Cl	1	BC003
+s1_4	I	I	1	BC004
+s2_1	X	X	2	BC005
+s2_2	UM	UM	2	BC006
+s2_3	Cl	Cl	2	BC007
+s2_4	I	I	2	BC008
+s3_1	X	X	3	BC013
+s3_2	UM	UM	3	BC014
+s3_3	Cl	Cl	3	BC015
+s3_4	I	I	3	BC016

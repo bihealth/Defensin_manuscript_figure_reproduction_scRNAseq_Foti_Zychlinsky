@@ -1,0 +1,156 @@
+---
+title: "03 - Cell type annotation by reference mapping"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+    toc: true
+    toc_float: true
+params:
+  batch_rds: "../data/intermediate/sobj_batch.rds"
+  reference_rds: "../data/pbmc_multimodal_reference.rds"
+  # NOT ../data/20250919_pbmc.rds: that path is (or may be symlinked to) the
+  # original manuscript object every figure Rmd reads for comparison -
+  # writing the reproduction there overwrites the ground truth you're
+  # trying to reproduce. Diff output_pbmc_rds against ../data/20250919_pbmc.rds
+  # by hand once this finishes; only replace the latter deliberately.
+  output_pbmc_rds: "../data/intermediate/20250919_pbmc_reproduced.rds"
+  output_sct_rds: "../data/intermediate/sct_per_sample.rds"
+  # If you've ever symlinked this path to a precomputed original (e.g. to
+  # unblock differential_expression/01_pseudobulk_count_tables.Rmd without
+  # re-running this Rmd), re-running this Rmd with this default writes
+  # straight through that symlink and overwrites the original - same risk as
+  # output_pbmc_rds above. Check `file.exists(Sys.readlink(...))` / `ls -la`
+  # before re-running, or point this at a fresh path.
+  output_annotated_rds: "../data/intermediate/sobj_pbmc_annotated.rds"
+date: "`r Sys.Date()`"
+---
+
+Cell types are assigned by Seurat's multimodal reference-mapping workflow
+against the human PBMC atlas (Hao et al. 2021), following the
+[Seurat vignette](https://satijalab.org/seurat/articles/multimodal_reference_mapping.html):
+per-sample `SCTransform` -> `FindTransferAnchors` -> `MapQuery` ->
+`TransferData` -> `IntegrateEmbeddings` -> `ProjectUMAP`. Three levels of
+label granularity are transferred (`celltype.l1/l2/l3`); only l1 and l2 are
+used downstream (l3 prediction scores were too low, see manuscript Methods).
+
+The reference is not redistributed here — see
+[`data/README.md`](../data/README.md#3-human-pbmc-multimodal-reference-required-only-to-re-run-preprocessing03_annotation_label_transferrmd)
+for where to download it and how to point `params$reference_rds` at it.
+Input is the batch-corrected object from
+[`02_qc_clustering.Rmd`](02_qc_clustering.Rmd); output
+(`params$output_pbmc_rds`) defaults to a path under `data/intermediate/`,
+*not* `data/20250919_pbmc.rds` (the object every figure Rmd reads) - see
+the note on `output_pbmc_rds` above for why. Compare the two by hand to
+check reproduction; only replace `data/20250919_pbmc.rds` deliberately.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+})
+options(future.globals.maxSize = 200 * 1024 * 1024^2)
+source("../R/io_helpers.R")
+dir.create(dirname(params$output_annotated_rds), recursive = TRUE, showWarnings = FALSE)
+
+require_files(c(batch_rds = params$batch_rds, reference_rds = params$reference_rds))
+sobj <- readRDS(params$batch_rds)
+reference <- readRDS(params$reference_rds)
+```
+
+## Per-sample reference mapping
+
+```{r map query}
+DefaultAssay(sobj) <- "RNA"
+scobj <- SplitObject(sobj, split.by = "sample")
+
+map_to_reference <- function(sample_name) {
+  sc <- scobj[[sample_name]] %>% SCTransform(verbose = FALSE, vst.flavor = "v2")
+  anchors <- FindTransferAnchors(reference = reference, query = sc,
+                                  normalization.method = "SCT",
+                                  reference.reduction = "spca", dims = 1:50)
+  res <- MapQuery(anchorset = anchors, query = sc, reference = reference,
+                   refdata = list(celltype.l1 = "celltype.l1", celltype.l2 = "celltype.l2", celltype.l3 = "celltype.l3"),
+                   reference.reduction = "spca", reduction.model = "wnn.umap", verbose = FALSE)
+  res <- TransferData(anchorset = anchors, reference = reference, query = res,
+                       refdata = list(celltype.l1 = "celltype.l1", celltype.l2 = "celltype.l2", celltype.l3 = "celltype.l3"))
+  res <- IntegrateEmbeddings(anchorset = anchors, reference = reference, query = res, new.reduction.name = "ref.spca")
+  ProjectUMAP(query = res, query.reduction = "ref.spca", reference = reference,
+              reference.reduction = "spca", reduction.model = "wnn.umap")
+}
+
+sct_r <- lapply(names(scobj), map_to_reference)
+names(sct_r) <- names(scobj)
+saveRDS(sct_r, params$output_sct_rds)
+```
+
+## QC of label transfer
+
+```{r qc scores}
+md <- do.call(rbind, lapply(names(sct_r), function(x) {
+  sct_r[[x]]@meta.data[, c("nCount_RNA", "nFeature_RNA", "predicted.celltype.l1.score",
+                            "predicted.celltype.l2.score", "predicted.celltype.l3.score")] %>%
+    mutate(orig.ident = x)
+})) %>%
+  group_by(orig.ident) %>%
+  mutate(orig.ident = paste0(orig.ident, " (n=", n(), ")")) %>%
+  gather(metric, value, -orig.ident)
+
+ggplot(md, aes(x = orig.ident, y = value, fill = orig.ident)) +
+  geom_violin(scale = "width") +
+  facet_wrap(~metric, scales = "free_y", ncol = 2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5), legend.position = "none") +
+  labs(x = "", y = "")
+```
+
+```{r attach labels}
+pbmc.all <- merge(sct_r[[1]], sct_r[2:length(sct_r)], add.cell.ids = names(sct_r))
+predicted <- pbmc.all[[]] %>%
+  select(predicted.celltype.l1, predicted.celltype.l2) %>%
+  rownames_to_column("cells") %>%
+  mutate(cells = sub("BC0[0-9][0-9]_", "", cells)) %>%
+  column_to_rownames("cells")
+sobj <- AddMetaData(sobj, metadata = predicted)
+
+DimPlot(sobj, label = TRUE, repel = TRUE, group.by = "predicted.celltype.l1", reduction = "iUMAPcca") + NoLegend()
+saveRDS(sobj, params$output_annotated_rds)
+```
+
+## Build the final object with reference-space embeddings
+
+This reproduces `20250919_pbmc.rds`: the merged, annotated object (reference
+UMAP + spca embeddings attached) that every figure Rmd loads. Saved to
+`params$output_pbmc_rds`, not directly over `data/20250919_pbmc.rds` - see
+the params note above.
+
+```{r final object}
+umap <- do.call(rbind, lapply(seq_along(sct_r), function(i) {
+  emb <- Embeddings(sct_r[[i]], reduction = "ref.umap")
+  rownames(emb) <- paste0(names(sct_r)[[i]], "_", rownames(emb))
+  emb
+}))
+spca <- do.call(rbind, lapply(seq_along(sct_r), function(i) {
+  emb <- Embeddings(sct_r[[i]], reduction = "ref.spca")
+  rownames(emb) <- paste0(names(sct_r)[[i]], "_", rownames(emb))
+  emb
+}))
+pbmc.all[["umap"]] <- CreateDimReducObject(embeddings = umap, key = "UMAP_", assay = DefaultAssay(pbmc.all))
+pbmc.all[["ref.spca"]] <- CreateDimReducObject(embeddings = spca, key = "SPCA_", assay = DefaultAssay(pbmc.all))
+pbmc.all[["pct.mito"]] <- PercentageFeatureSet(pbmc.all, pattern = "^MT-")
+
+DimPlot(pbmc.all, group.by = "predicted.celltype.l1", reduction = "umap", label = TRUE, repel = TRUE)
+
+pbmc.all[[]] %>%
+  ggplot(aes(predicted.celltype.l1, fill = predicted.celltype.l1)) +
+  geom_bar(position = "identity") +
+  facet_wrap(~sample) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+
+saveRDS(pbmc.all, params$output_pbmc_rds)
+```
+
+```{r session info}
+sessionInfo()
+```

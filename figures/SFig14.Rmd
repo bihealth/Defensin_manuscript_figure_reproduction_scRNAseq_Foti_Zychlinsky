@@ -1,0 +1,88 @@
+---
+title: "Supplementary Figure 14"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+params:
+  de_dir: "../data/intermediate/de_results"
+  output_dir: "../output/SFig14"
+date: "`r Sys.Date()`"
+---
+
+"Halo-HNP1s modulate chemokine genes expression" - CD4 T cell log2FC-vs-log2FC
+concordance scatters between pairs of contrasts. The top 30 genes ranked by
+discordance/concordance score are labeled and coloured by -log10(adjusted P)
+of the named comparison.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(patchwork)
+})
+source("../R/plot_theme.R")
+source("../R/io_helpers.R")
+source("../R/panel_helpers.R")
+
+de <- load_de_results(params$de_dir)
+res_by_contrast <- de$by_contrast
+```
+
+```{r panels, fig.width=8, fig.height=4.5}
+panel_a <- concordance_scatter(res_by_contrast, "UM_vs_X", "Cl_vs_X", "CD4_T", style = "gradient_top30",
+                               title = "CD4 T cells", xlab = "log2FC HNP1 vs vehicle", ylab = "log2FC ClY21-HNP1 vs vehicle")+
+  theme(legend.position = "inside",
+        legend.position.inside=c(0.85,0.2))
+
+panel_b <- concordance_scatter(res_by_contrast, "UM_vs_X", "I_vs_X", "CD4_T", style = "gradient_top30",
+                               title = "CD4 T cells", xlab = "log2FC HNP1 vs vehicle", ylab = "log2FC IY16-HNP1 vs vehicle")+
+  theme(legend.position = "inside",
+        legend.position.inside=c(0.85,0.2))
+
+panel_c <- concordance_scatter(res_by_contrast, "I_vs_X", "Cl_vs_X", "CD4_T", style = "gradient_top30",
+                               title = "CD4 T cells", xlab = "log2FC IY16-HNP1 vs vehicle", ylab = "log2FC ClY21-HNP1 vs vehicle")+
+  theme(legend.position = "inside",
+        legend.position.inside=c(0.85,0.2))
+
+panel_a | panel_b | panel_c
+```
+
+```{r assembly, fig.width=8, fig.height=4.5}
+sfig14 <- (wrap_elements(panel_a) | wrap_elements(panel_b) | wrap_elements(panel_c)) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 8, face = "bold", hjust = -.5, vjust = 0))
+sfig14
+```
+
+```{r panel data}
+scatter_data <- function(contrast_x, contrast_y) {
+  # Matches concordance_scatter()'s own filtering (R/panel_helpers.R) so the
+  # exported table is the same gene set shown in the plot (grey background
+  # points + top-30 labeled/coloured), not every gene DESeq2 tested - drop
+  # deprecated/Ensembl-ID fallback names, and keep only genes significant in
+  # at least one of the two contrasts.
+  inner_join(
+    res_by_contrast[[contrast_x]] %>% filter(cell_type == "CD4_T") %>% select(gene_name, log2FC_x = log2FoldChange, padj_x = padj),
+    res_by_contrast[[contrast_y]] %>% filter(cell_type == "CD4_T") %>% select(gene_name, log2FC_y = log2FoldChange, padj_y = padj),
+    by = "gene_name"
+  ) %>%
+    filter(!grepl("DEPRECATED", gene_name), !grepl("^ENSG", gene_name)) %>%
+    filter((!is.na(padj_x) & padj_x < 0.05) | (!is.na(padj_y) & padj_y < 0.05))
+}
+data_a <- scatter_data("UM_vs_X", "Cl_vs_X")
+data_b <- scatter_data("UM_vs_X", "I_vs_X")
+data_c <- scatter_data("I_vs_X", "Cl_vs_X")
+```
+
+```{r save}
+save_figure_pdf(sfig14, file.path(params$output_dir, "SFig14.pdf"), width = 8, height = 4.5)
+write_panel_xlsx(
+  list(A_scatter_ClvsUM_CD4T = data_a, B_scatter_IvsUM_CD4T = data_b, C_scatter_ClvsI_CD4T = data_c),
+  file.path(params$output_dir, "SFig14_data.xlsx")
+)
+```
+
+```{r session info}
+sessionInfo()
+```

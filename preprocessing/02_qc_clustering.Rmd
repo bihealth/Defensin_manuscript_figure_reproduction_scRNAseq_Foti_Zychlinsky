@@ -1,0 +1,187 @@
+---
+title: "02 - QC, filtering, clustering and batch correction"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+    toc: true
+    toc_float: true
+params:
+  h5_dir: "../data/cellbender_h5"
+  sample_table: "../sample_tables/sample_table_final12.txt"
+  output_rds: "../data/intermediate/sobj_batch.rds"
+  markers_csv: "../data/intermediate/cluster_markers.csv"
+  markers_cca_csv: "../data/intermediate/cluster_markers_cca.csv"
+date: "`r Sys.Date()`"
+---
+
+Starting point: CellBender-denoised per-sample count matrices (see
+[`01_upstream_processing.md`](01_upstream_processing.md)). This Rmd loads
+them, applies QC filtering, runs the standard Seurat clustering workflow,
+then batch-corrects across donors (`IntegrateLayers`, CCA) and re-clusters
+on the integrated embedding. Its output (`params$output_rds`) is the input
+to [`03_annotation_label_transfer.Rmd`](03_annotation_label_transfer.Rmd).
+
+By default this renders the final 12-sample analysis (`sample_table_final12.txt`,
+donor 3 already excluded) that every figure in this repo is built on.
+SFig11's donor-3-outlier diagnostic (panels A/E) does **not** need this Rmd
+re-run — it uses precomputed pseudobulk count tables already vendored in
+[`../figures/SFig11_data/`](../figures/SFig11_data/). Re-running this Rmd
+with `params$sample_table` pointed at `../sample_tables/sample_table_full16.txt`
+(and `params$output_rds` changed to avoid overwriting the default output) is
+only needed if you want to rebuild that diagnostic from scratch instead —
+see [`../docs/donor3_exclusion.md`](../docs/donor3_exclusion.md).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(hdf5r)
+  library(DT)
+})
+
+options(future.globals.maxSize = 48 * 1024 * 1024^2)
+source("../R/io_helpers.R")
+
+dir.create(dirname(params$output_rds), recursive = TRUE, showWarnings = FALSE)
+
+require_files(c(sample_table = params$sample_table, h5_dir = params$h5_dir))
+sample_table <- read.delim(params$sample_table, header = TRUE)
+sample_table
+```
+
+## Load CellBender-denoised matrices and merge
+
+```{r load merge}
+h5_files <- list.files(params$h5_dir, pattern = "BC.*filtered_seurat.*h5$",
+                        recursive = TRUE, full.names = TRUE)
+names(h5_files) <- sub("_.*", "", sub(".*BC", "BC", h5_files))
+h5_files <- h5_files[names(h5_files) %in% sample_table$barcode]
+stopifnot("no CellBender h5 files found for any sample in params$sample_table - check params$h5_dir" = length(h5_files) > 0)
+
+sobjs <- lapply(names(h5_files), function(bc) {
+  Read10X_h5(h5_files[[bc]]) %>%
+    CreateSeuratObject(project = bc, assay = "RNA", min.cells = 1, min.features = 20)
+})
+
+sobj_cb <- merge(sobjs[[1]], sobjs[2:length(sobjs)], add.cell.ids = names(h5_files), project = "A4869_Foti") %>%
+  JoinLayers(assay = "RNA")
+```
+
+## QC metrics and filtering
+
+Cutoffs: `pct.mito < 10`, `500 <= nFeature_RNA < 6000`, genes detected in >=1 cell.
+
+```{r qc metrics}
+md <- data.frame(barcode = sub("_.*", "", Cells(sobj_cb)), cells = Cells(sobj_cb)) %>%
+  left_join(sample_table, by = "barcode") %>%
+  column_to_rownames("cells")
+sobj_cb <- AddMetaData(sobj_cb, metadata = md)
+sobj_cb[["pct.mito"]] <- PercentageFeatureSet(sobj_cb, pattern = "^MT-")
+
+ggplot(sobj_cb[[]] %>% select(sample, nCount_RNA, nFeature_RNA, pct.mito) %>%
+         gather(metric, value, -sample),
+       aes(x = sample, y = value, fill = sample)) +
+  geom_boxplot(outlier.size = .5) +
+  facet_wrap(~metric, ncol = 4, scales = "free_y") +
+  theme_classic() +
+  theme(axis.text.x = element_blank(), legend.position = "bottom")
+```
+
+```{r filter}
+mito_cutoff <- 10
+nFeature_cutoff <- 6000
+
+sobj <- CreateSeuratObject(counts = GetAssayData(sobj_cb, assay = "RNA", layer = "counts"),
+                            min.cells = 1, min.features = 500)
+sobj[["pct.mito"]] <- PercentageFeatureSet(sobj_cb, pattern = "^MT-")
+sobj <- subset(sobj, (pct.mito < mito_cutoff) & (nFeature_RNA < nFeature_cutoff))
+sobj <- AddMetaData(sobj, metadata = md[Cells(sobj), , drop = FALSE])
+
+sobj[[]] %>%
+  group_by(sample) %>%
+  summarise(ncells = n(), nGene = median(nFeature_RNA), nUMI = median(nCount_RNA), pct.mito = mean(pct.mito))
+```
+
+## Standard Seurat workflow (per-sample, pre-batch-correction)
+
+```{r cluster}
+s.genes <- cc.genes$s.genes[cc.genes$s.genes %in% rownames(sobj)]
+g2m.genes <- cc.genes$g2m.genes[cc.genes$g2m.genes %in% rownames(sobj)]
+
+sobj <- sobj %>%
+  NormalizeData(normalization.method = "LogNormalize", scale.factor = 10000, verbose = FALSE) %>%
+  FindVariableFeatures(selection.method = "vst", nfeatures = 2000, verbose = FALSE) %>%
+  CellCycleScoring(s.features = s.genes, g2m.features = g2m.genes, set.ident = FALSE) %>%
+  ScaleData(vars.to.regress = c("S.Score", "G2M.Score"), verbose = FALSE) %>%
+  RunPCA(features = VariableFeatures(.), verbose = FALSE) %>%
+  FindNeighbors(dims = 1:15, verbose = FALSE) %>%
+  RunUMAP(dims = 1:15, verbose = FALSE) %>%
+  FindClusters(resolution = .6, verbose = FALSE)
+
+ElbowPlot(sobj)
+DimPlot(sobj, group.by = "sample") | DimPlot(sobj, group.by = "treatment") | DimPlot(sobj, group.by = "batch")
+DimPlot(sobj, label = TRUE, repel = TRUE)
+```
+
+```{r markers, fig.width=8, fig.height=10}
+Idents(sobj) <- "seurat_clusters"
+markers <- FindAllMarkers(sobj, only.pos = TRUE, min.pct = 0.25, verbose = FALSE)
+write.csv(markers, params$markers_csv, row.names = FALSE)
+
+top5 <- markers %>% group_by(cluster) %>% slice_max(avg_log2FC, n = 5, with_ties = FALSE)
+DotPlot(sobj, features = unique(top5$gene)) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)) +
+  labs(x = "", y = "") + coord_flip() + ggtitle("top5 markers per cluster")
+
+markers %>%
+  mutate_if(is.numeric, signif, 2) %>%
+  DT::datatable(rownames = FALSE, extensions = "Buttons", options = list(dom = "frtBip", buttons = c("csv")))
+```
+
+## Batch correction (CCA integration across donors) and re-clustering
+
+```{r integrate}
+sobj[["RNA"]] <- split(sobj[["RNA"]], f = sobj$batch)
+sobj <- IntegrateLayers(object = sobj, method = CCAIntegration,
+                         orig.reduction = "pca", new.reduction = "integrated.cca", verbose = FALSE)
+sobj <- FindNeighbors(sobj, reduction = "integrated.cca", dims = 1:30)
+sobj <- FindClusters(sobj, resolution = .8, cluster.name = "cca_clusters")
+sobj <- RunUMAP(sobj, reduction = "integrated.cca", dims = 1:30, reduction.name = "iUMAPcca")
+sobj <- JoinLayers(sobj)
+```
+
+```{r int dims, fig.width=15, fig.height=6}
+DimPlot(sobj, group.by = "cca_clusters", reduction = "iUMAPcca", label = TRUE, repel = TRUE) |
+  DimPlot(sobj, group.by = "batch", reduction = "iUMAPcca", label = TRUE, repel = TRUE)
+DimPlot(sobj, group.by = "sample", reduction = "iUMAPcca", label = TRUE, repel = TRUE) |
+  DimPlot(sobj, group.by = "treatment", reduction = "iUMAPcca", label = TRUE, repel = TRUE)
+```
+
+```{r markers cca, fig.width=8, fig.height=15}
+DefaultAssay(sobj) <- "RNA"
+Idents(sobj) <- "cca_clusters"
+markers_cca <- FindAllMarkers(sobj, only.pos = TRUE, min.pct = 0.25, verbose = FALSE)
+write.csv(markers_cca, params$markers_cca_csv, row.names = FALSE)
+
+top5 <- markers_cca %>% group_by(cluster) %>% slice_max(avg_log2FC, n = 5, with_ties = FALSE)
+DotPlot(sobj, features = unique(top5$gene)) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)) +
+  labs(x = "", y = "") + coord_flip() + ggtitle("top5 markers per cca cluster")
+
+markers_cca %>%
+  mutate_if(is.numeric, signif, 2) %>%
+  DT::datatable(rownames = FALSE, extensions = "Buttons", options = list(dom = "frtBip", buttons = c("csv")))
+```
+
+```{r save}
+saveRDS(sobj, params$output_rds)
+```
+
+```{r session info}
+sessionInfo()
+```

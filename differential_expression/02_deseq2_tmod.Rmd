@@ -1,0 +1,175 @@
+---
+title: "02 - Pseudobulk DESeq2 + tmod gene set enrichment"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+params:
+  counts_l1: "../data/intermediate/counts_l1.tsv"
+  sample_table: "../sample_tables/sample_table_final12.txt"
+  shrinkage_type: "normal"
+  output_dir: "../data/intermediate/de_results"
+date: "`r Sys.Date()`"
+---
+
+Pseudobulk differential expression per cell type (design `~batch + group`),
+6 pairwise contrasts among the 4 treatments (`X` = vehicle, `UM` = HNP1,
+`Cl` = ClY21-HNP1, `I` = IY16-HNP1), followed by tmod gene set enrichment
+(BTM modules, the built-in `tmod` set — this is the only gene set collection
+used in the manuscript; no MSigDB/Reactome/KEGG/GO enrichment was part of
+the final analysis). Per the manuscript Methods: *"We extracted pairwise
+comparisons between different groups from the same results object, to
+consider the total variance from all samples in the experiment."*
+
+Input is `counts_l1.tsv` from
+[`01_pseudobulk_count_tables.Rmd`](01_pseudobulk_count_tables.Rmd). Output
+(`params$output_dir/results_<contrast>.tsv`, one of 6 files) is what every
+figure Rmd reads to build its DE-based panels.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(ggrepel)
+  library(DESeq2)
+  library(tmod)
+  library(DT)
+})
+source("../R/io_helpers.R")
+dir.create(params$output_dir, recursive = TRUE, showWarnings = FALSE)
+
+require_files(c(counts_l1 = params$counts_l1, sample_table = params$sample_table))
+sample_table <- read.delim(params$sample_table)
+counts <- read.delim(params$counts_l1, header = TRUE) %>% tibble::column_to_rownames("gene_name")
+
+selected_contrasts <- c("UM_vs_X", "Cl_vs_X", "I_vs_X", "Cl_vs_UM", "I_vs_UM", "Cl_vs_I")
+```
+
+```{r coldata}
+colData <- data.frame(sample_name = factor(colnames(counts)),
+                       cell_type = factor(sub("_s.*", "", colnames(counts))),
+                       sample = factor(sub(".*_s", "s", colnames(counts)))) %>%
+  left_join(sample_table, by = "sample") %>%
+  mutate(batch = factor(batch)) %>%
+  filter(cell_type != "other")
+
+selected_cell_types <- unique(colData$cell_type)
+selected_contrasts
+```
+
+## DESeq2, all cell types x all contrasts
+
+```{r deseq2}
+res <- list()
+for (celltype in selected_cell_types) {
+  coldata_df <- filter(colData, cell_type == celltype)
+  counts_df <- subset(counts, select = as.character(coldata_df$sample_name))
+  if (sum(colSums(counts_df)) == 0) next
+
+  dds <- DESeqDataSetFromMatrix(countData = as.matrix(counts_df), colData = coldata_df, design = ~batch + group)
+
+  sub_res <- list()
+  for (comparison in selected_contrasts) {
+    perturbation <- sub("_vs_.*", "", comparison)
+    reference <- sub(".*_vs_", "", comparison)
+    dds$group <- relevel(dds$group, ref = reference)
+    dds <- if (celltype %in% c("all", "all_cells")) estimateSizeFactors(dds) else estimateSizeFactors(dds, type = "poscounts")
+    dds <- DESeq(dds)
+
+    sub_res[[comparison]] <- (if (params$shrinkage_type == "apeglm") {
+      lfcShrink(dds, coef = paste0("group_", comparison), type = params$shrinkage_type, format = "DataFrame")
+    } else {
+      lfcShrink(dds, contrast = c("group", perturbation, reference), type = params$shrinkage_type, format = "DataFrame")
+    }) %>%
+      as.data.frame() %>%
+      tibble::rownames_to_column("gene_name") %>%
+      mutate(cell_type = celltype, contrast = comparison)
+  }
+  res[[celltype]] <- do.call(rbind, sub_res) %>% tibble::remove_rownames()
+}
+res_df <- do.call(rbind, res) %>% tibble::remove_rownames()
+```
+
+```{r save results}
+for (contrast_name in unique(res_df$contrast)) {
+  write.table(filter(res_df, contrast == contrast_name),
+              file.path(params$output_dir, paste0("results_", contrast_name, ".tsv")),
+              quote = FALSE, sep = "\t", row.names = FALSE)
+}
+```
+
+## QC: volcano plots per contrast, all cell types
+
+```{r volcano, fig.height=18, fig.width=10}
+for (comparison in unique(res_df$contrast)) {
+  print(
+    res_df %>%
+      filter(!is.na(padj), contrast == comparison) %>%
+      ggplot(aes(x = log2FoldChange, y = -log10(pvalue), color = padj < .05)) +
+      geom_point(size = .5, shape = 1) +
+      geom_label_repel(data = filter(res_df, contrast == comparison, padj < .05),
+                        aes(label = gene_name), segment.size = .25, segment.alpha = .5, size = 3,
+                        color = "black", max.overlaps = 50, label.padding = 0.05, label.size = NA) +
+      scale_color_manual(values = c("black", "red")) +
+      theme_classic() + theme(legend.position = "none", strip.background = element_blank()) +
+      ggtitle(comparison) + facet_wrap(~cell_type, ncol = 2, scales = "free")
+  )
+}
+```
+
+```{r show results table}
+res_df %>%
+  filter(padj < .05) %>%
+  mutate_if(is.numeric, signif, 2) %>%
+  DT::datatable(rownames = FALSE, extensions = "Buttons", options = list(dom = "frtBip", buttons = c("csv")))
+```
+
+## QC: tmod (BTM) gene set enrichment per contrast, all cell types
+
+Same thresholding used for the manuscript's enrichment figures (Fig 5F,
+SFig12): `AUC > 0.70`. This QC pass uses a lenient q cutoff just to preview
+which modules turn up; each figure Rmd applies the exact per-panel q
+threshold stated in its legend.
+
+```{r tmod, fig.width=15, fig.height=10}
+data(tmod)
+res_by_contrast <- split(res_df, res_df$contrast)
+
+enrich_panel <- function(contrast, q_filter = 1e-4, auc_filter = 0.70) {
+  l <- split(res_by_contrast[[contrast]], res_by_contrast[[contrast]]$cell_type)
+  genes <- lapply(l, function(x) x %>% filter(!is.na(padj)) %>% arrange(pvalue))
+  lgenes <- lapply(genes, function(x) x$gene_name)
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = tmod)
+
+  sgenes <- sapply(l, function(x) tmodDecideTests(x$gene_name, lfc = x$log2FoldChange, pval = x$padj,
+                                                    lfc.thr = 0, pval.thr = 0.05, mset = tmod))
+  names(sgenes) <- names(l)
+
+  keep <- names(res.tmod)[sapply(res.tmod, function(x) nrow(filter(x, adj.P.Val < q_filter, AUC > auc_filter)) > 0)]
+  relevant <- res.tmod[keep]
+  relevant <- Map(cbind, relevant, cell_type = lapply(names(relevant), function(x) rep(x, nrow(relevant[[x]]))))
+  if (length(relevant) > 0) {
+    print(ggPanelplot(relevant, sgenes = sgenes[names(relevant)], auc_thr = 0, q_thr = 1,
+                       filter_row_q = q_filter, filter_row_auc = auc_filter, q_cutoff = 1e-12) + ggtitle(contrast))
+  }
+  do.call(rbind, relevant)
+}
+
+res_tmod <- lapply(names(res_by_contrast), enrich_panel)
+names(res_tmod) <- names(res_by_contrast)
+res_tmod <- res_tmod[sapply(res_tmod, length) > 0]
+```
+
+```{r tmod table}
+res_tmod_df <- Map(cbind, res_tmod, contrast = lapply(names(res_tmod), function(x) rep(x, nrow(res_tmod[[x]])))) %>%
+  bind_rows()
+res_tmod_df %>%
+  mutate_if(is.numeric, signif, 2) %>%
+  DT::datatable(rownames = FALSE, extensions = "Buttons", options = list(dom = "frtBip", buttons = c("csv")))
+```
+
+```{r session info}
+sessionInfo()
+```

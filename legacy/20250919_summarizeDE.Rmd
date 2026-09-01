@@ -1,0 +1,1518 @@
+---
+output: 
+  html_document:
+    df_print: paged
+    code_folding: hide
+params:
+  title: "figures 190925"
+  shrinkage_type: "normal"
+title: "`r params$title`"
+---
+
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, cache=FALSE, cache.lazy=FALSE, message=FALSE, warning=FALSE)
+
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(gtools))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(DESeq2))
+suppressPackageStartupMessages(library(ggrepel))
+suppressPackageStartupMessages(library(stringr))
+suppressPackageStartupMessages(library(tmod))
+suppressPackageStartupMessages(library(DT))
+suppressPackageStartupMessages(library(ggpubr))
+suppressPackageStartupMessages(library(patchwork))
+
+
+
+options(future.globals.maxSize = 12 * 1024 * 1024^2)
+
+
+path <- "/data/cephfs-1/work/groups/cubi/projects/2022-04-27_CSCS_Miha/foti_redone/downstream_analysis/"
+
+results_dir <- "20250919_results"
+
+
+# environment R-fixed-biomart-deseq
+
+sample_table <- read.delim(file.path(path,"sample_table_20250919.txt"))
+
+plot_names <- structure(c("HNP1", "ClY21-HNP1", "IY16-HNP1"), names=c("UM", "Cl", "I"))
+
+```
+
+```{r object}
+sobj <- readRDS(file.path(path,"20250919_results/20250919_pbmc.rds"))
+
+```
+
+For this DE analysis, we used the following parameters:
+
+```{r print parameters}
+
+pars <- as.data.frame(do.call("rbind", params))
+colnames(pars) <- "parameters_used"
+pars
+
+```
+
+
+```{r f5a,fig.width=4,fig.height=3}
+
+
+f5a <- DimPlot(sobj, group.by="predicted.celltype.l1", reduction="umap",label=T, repel=T,label.size = 3)+
+  NoLegend()+
+  ggtitle("")+
+  theme(axis.text=element_text(size=8),
+        axis.title=element_text(size=8))
+f5a
+# DimPlot(sobj, group.by="predicted.celltype.l2", reduction="umap",label=T, repel=T)+NoLegend()
+
+```
+
+```{r s6c,fig.width=4,fig.height=3}
+Idents(sobj) <- "predicted.celltype.l1"
+
+features=c("PTPRC", "CD8A", "CD4","GZMK", "CCL5", "S100A4", "ANXA1", "CCR7", "ISG15", "CD3D", "CD3E","CD19", "CSF1R", "S100A8","MS4A2","CD14","CD1C","NCAM1")
+
+library(RColorBrewer)
+s6c <- DotPlot(sobj, features = features,dot.scale = 3)+ 
+  scale_colour_gradientn(colours =rev(brewer.pal(n = 10, name = "RdBu"))) + 
+  theme(text = element_text(family = "Arial"),
+        axis.text.x=element_text(angle=90,hjust=1,vjust=.5, size=8),
+        axis.text.y=element_text(size=8),
+        strip.text.x = element_text(size = 8, angle=90),#for facet wrap
+        strip.placement = "down",
+        axis.title = element_text(size=8,face="bold"),
+        axis.title.y.right = element_text(size = 8),
+        legend.text=element_text(size=8),
+        legend.position = "top",
+        legend.title=element_text(size=8),
+        legend.key.width = unit(.05,"in"),
+        legend.key.height = unit(.15,"in"),
+        axis.line = element_line(linewidth=1)) +
+   guides(colour=guide_legend(ncol=2),
+          size=guide_legend(ncol=2))+
+labs(x = c(), y = c())
+
+s6c
+```
+
+ 
+```{r, fig.width=8,fig.height=12}
+
+files <- list.files("/data/cephfs-1/work/groups/cubi/projects/2022-04-27_CSCS_Miha/foti_redone/downstream_analysis/20250919_results", pattern = "results.*tsv", full.names = T)
+
+res <- lapply(files, read.delim, header=T)
+names(res) <- sub("_1909.*","",sub(".*list_","",files))
+
+```
+ 
+
+
+```{r load counts}
+
+counts <- read.delim(file.path(path, "20250919_results","counts_l1_190925.tsv"))
+
+```
+
+```{r cell numbers layer1,fig.height=10,fig.width=12}
+
+counts <- counts %>%
+  tibble::column_to_rownames("gene_name")
+
+lengths <- counts %>% 
+  colSums()
+
+df_lengths <- data.frame(sample = names(lengths),
+                         n_reads = lengths) %>%
+  mutate(sample_name=sample) %>%
+  mutate(sample=sub(".*_s","s",sample_name), celltype=sub("_s.*","",sample_name)) %>% 
+  left_join(sample_table) %>%
+  mutate(batch=factor(batch))
+  
+
+# ggplot(df_lengths, aes(group,n_reads,colour=group))+
+#   geom_point(position=position_dodge(width=.5), size=2) +
+#   facet_wrap(~celltype, scales="free")+
+#   theme(axis.text.x=element_blank())
+
+
+```
+
+The following cell types might have too little reads to do DE pseudobulk analysis on.
+
+```{r}
+
+exclude <- df_lengths[which(df_lengths$n_reads<5e5),"celltype"] %>% unique
+exclude
+```
+
+Plot PCA for each cell type and covariates.
+
+```{r plot PCA, results=F, fig.width=6,fig.height=6}
+
+colData<-data.frame(sample_name=factor(names(counts)),
+               cell_type=factor(sub("_s.*","",names(counts))),
+               sample=factor(sub(".*_s","s", names(counts)))) %>%
+  left_join(sample_table) %>%
+  mutate(batch=factor(batch))
+
+celltypes <- colData %>%
+  filter(!(cell_type %in% exclude)) %>%
+  pull(cell_type) %>%
+  unique() 
+
+plotPCA_per_celltype <- function(celltype){
+  # celltype <- "all"
+  cd <- filter(colData, cell_type==celltype)
+  cnt <- cd %>%
+    pull(sample_name) %>% unique()
+  
+  dds <- DESeqDataSetFromMatrix(countData=counts[,cnt],
+                                colData=cd,
+                                design=~1) %>% 
+    DESeq()
+  rld <- vst(dds)
+  
+  for (cov in c("sample", "group", "batch")){
+    p <- plotPCA(rld, intgroup=cov) + 
+      guides(colour=guide_legend(title=cov)) +
+      ggtitle(celltype)
+    print(p)
+  }
+  
+}
+
+# lapply(c("all" ), plotPCA_per_celltype )
+
+cd <- filter(colData, cell_type=="all")
+cnt <- cd %>%
+  pull(sample_name) %>% unique()
+
+dds <- DESeqDataSetFromMatrix(countData=counts[,cnt],
+                              colData=cd,
+                              design=~1) %>% 
+  DESeq()
+rld <- vst(dds)
+
+p <- plotPCA(rld, intgroup=c("sample", "batch"), returnData=T)  %>%
+  ggplot(aes(PC1, PC2, color=sample, shape=batch)) +geom_point(size=3) 
+print(p)
+
+p <- plotPCA(rld, intgroup=c("group", "batch"), returnData=T)  %>%
+  ggplot(aes(PC1, PC2, color=group.1, shape=batch)) +geom_point(size=3) 
+print(p)
+
+``` 
+
+```{r prepare coldata}
+
+sample_name <- sub(".*_s", "s", colnames(counts))
+cell_type <- sub("_s.*", "", colnames(counts))
+
+colData<-data.frame(sample_name=factor(colnames(counts)),
+               cell_type=factor(cell_type),
+               sample=factor(sample_name)) %>%
+  left_join(sample_table) %>%
+  mutate(batch=factor(batch)) %>%
+  filter(cell_type!="other")
+
+
+               
+selected_cell_types <- "all"
+  
+
+
+
+selected_contrasts <- c("UM_vs_X")
+
+selected_contrasts
+```
+
+
+```{r all contrasts}
+
+celltype <- "Mono"
+coldata_df <- colData %>%
+  dplyr::filter(cell_type %in% celltype) 
+
+counts_df <- subset(counts, select = as.character(coldata_df$sample_name))
+dds <- DESeqDataSetFromMatrix(countData=as.matrix(counts_df),
+                              colData=coldata_df,
+                              design=~batch + group)
+contrasts <- selected_contrasts
+sub_res <- list()
+
+comparison<- "UM_vs_X"
+perturbation <- sub("_vs_.*", "", comparison)
+reference <- sub(".*_vs_", "", comparison)
+dds$group <- relevel(dds$group, ref = reference)
+dds <- estimateSizeFactors(dds, type="poscounts")
+dds <- DESeq(dds)
+
+rlogs <- rlog(dds, blind=F)
+
+data(tmod)
+gene_sets <- c("LI.M27.1", "LI.M59", "DC.M1.2") 
+genes <- getGenes(gs=gene_sets, mset="all", as.list=T) %>% unlist()
+genes_df <- data.frame(gene_set=names(genes), gene=genes)
+
+counts(dds, normalize=T) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("gene_name") %>%
+  filter(gene_name %in% c("CCL7", "CCR1", "CCL2", "OAS2" ,"LY6E", "ISG15", "CCL5", "ISG15", "SOCS2", "OTOF")) %>%
+  # filter(gene_name %in% genes_df$gene) %>%
+  # filter(rowMeans(.[,-1])>60000) %>%
+  tidyr::pivot_longer(-gene_name, names_to="sample_name", values_to="normalized_counts") %>%
+  left_join(coldata_df) %>%
+  ggplot(aes(group, log2(normalized_counts),colour=group,shape=batch)) +
+  geom_point(size=3, position = position_jitterdodge(jitter.width = .1)) +
+  facet_wrap(~gene_name, scales="free_y")
+
+
+# rlogs@assays@data[[1]] %>%
+#    as.data.frame() %>%
+#   tibble::rownames_to_column("gene_name") %>%
+#   filter(gene_name %in% c("CCL7", "CCR1", "CCL2", "OAS2" ,"LY6E", "ISG15", "CCL5", "ISG15", "SOCS2", "OTOF")) %>%
+#   # filter(gene_name %in% genes_df$gene) %>%
+#   # filter(rowMeans(.[,-1])>60000) %>%
+#   tidyr::pivot_longer(-gene_name, names_to="sample_name", values_to="rlog_counts") %>%
+#   left_join(coldata_df) %>%
+#   ggplot(aes(group, rlog_counts,colour=group,shape=batch)) +
+#   geom_point(size=3, position = position_jitterdodge(jitter.width = .1)) +
+#   facet_wrap(~gene_name, scales="free_y")
+# 
+# rld_blind <- switch("vst",
+#         "rld"=rlog(dds, blind=TRUE),
+#         "vst"=vst(dds, blind=TRUE)
+# )
+# 
+# 
+# assay(rld_blind) %>%
+#   as.data.frame() %>%
+#   tibble::rownames_to_column("gene_name") %>%
+#   filter(gene_name %in% c("CCL7", "CCR1", "CCL2", "OAS2" ,"LY6E", "ISG15", "CCL5", "ISG15", "SOCS2", "OTOF")) %>%
+#   # filter(gene_name %in% genes_df$gene) %>%
+#   # filter(rowMeans(.[,-1])>60000) %>%
+#   tidyr::pivot_longer(-gene_name, names_to="sample_name", values_to="rlog_counts") %>%
+#   left_join(coldata_df) %>%
+#   ggplot(aes(group, rlog_counts,colour=group,shape=batch)) +
+#   geom_point(size=3, position = position_jitterdodge(jitter.width = .1)) +
+#   facet_wrap(~gene_name, scales="free_y")
+
+```
+
+
+
+```{r}
+
+res$Cl_vs_X %>%
+  filter(cell_type=="Mono") %>%
+  filter(gene_name %in% c("CCL7", "CCR1", "CCL2", "OAS2" ,"LY6E", "ISG15", "CCL5"))
+  
+
+relevant_genes <- res$Cl_vs_X %>%
+  filter(cell_type=="Mono") %>%
+  filter(padj < .05) %>%
+  filter(gene_name %in% genes_df$gene) %>%
+  pull(gene_name)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+Volcano plots.
+
+```{r f5c f5d f5e, fig.width=4,fig.height=3}
+
+f5c <- res[["UM_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="Mono") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["UM_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="Mono"),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=80,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic() +
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("HNP1 vs X", " (Monocytes)"))
+print(f5c)
+
+f5d <- res[["Cl_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="Mono") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["Cl_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="Mono"),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=80,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic() +
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("ClY21-HNP1 vs X", " (Monocytes)"))
+print(f5d)
+
+
+
+f5e <- res[["I_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="Mono") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["I_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="Mono"),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=80,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic() +
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("IY16-HNP1 vs X", " (Monocytes)"))
+print(f5e)
+```
+
+```{r s8a s8b s8c, fig.width=4,fig.height=3}
+
+s8a <- res[["UM_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="DC") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["UM_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="DC") %>%
+                     dplyr::filter(!grepl("DEPRECATED",gene_name)),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=50,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic() +
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("HNP1 vs X", " (Dendritic)"))
+print(s8a)
+
+s8b <- res[["Cl_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="DC") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["Cl_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="DC") %>%
+                     dplyr::filter(!grepl("DEPRECATED",gene_name)),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=50,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic() +
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("ClY21-HNP1 vs X", " (Dendritic)"))
+print(s8b)
+
+
+
+s8c <- res[["I_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="DC") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["I_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="DC") %>%
+                     dplyr::filter(!grepl("DEPRECATED",gene_name)),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=50,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic() +
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("IY16-HNP1 vs X", " (Dendritic)"))
+print(s8c)
+```
+
+```{r s6d s6e s6f,fig.width=4,fig.height=3}
+
+s6d <- res[["UM_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="B") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["UM_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="B") %>%
+                     dplyr::filter(!grepl("DEPRECATED",gene_name)),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=50,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic()+
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("HNP1 vs X", " (B cells)"))
+print(s6d)
+
+s6e <- res[["Cl_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="B") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["Cl_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="B") %>%
+                     dplyr::filter(!grepl("DEPRECATED",gene_name)),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=50,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic() +
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("ClY21-HNP1 vs X", " (B cells)"))
+print(s6e)
+
+
+
+s6f <- res[["I_vs_X"]] %>%                  
+  dplyr::filter(!is.na(padj), baseMean>5, cell_type=="B") %>%
+  ggplot(aes(x=log2FoldChange,y=-log10(padj),color=padj < .05)) + 
+  geom_point(size=.5, shape=1) +
+  geom_label_repel(data=res[["I_vs_X"]]  %>%
+                     dplyr::filter(padj < .05,baseMean>5, cell_type=="B")%>%
+                     dplyr::filter(!grepl("DEPRECATED",gene_name)),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=50,
+                   label.padding=0.05,label.size=NA) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "grey") +
+  coord_cartesian(xlim=c(-4,4))+
+  scale_color_manual(values=c('black','red')) +
+  theme_classic() +
+  theme(strip.background=element_blank(),
+    plot.title=element_text(size=8),
+    axis.title=element_text(size=8),
+    axis.text=element_text(size=8),
+    legend.text=element_text(size=8),
+    legend.title=element_text(size=8))+
+  ggtitle(paste0("IY16-HNP1 vs X", " (B cells)"))
+print(s6f)
+
+
+```
+
+
+
+Get enrichments.
+
+```{r f5b, results=T, fig.width=8,fig.height=3}
+
+data(tmod)
+
+plot_cells <- c("B","Mono","DC")
+
+plot_contrasts <- c("HNP1_vs_X\n", "ClY21-HNP1\n_vs_X", "IY16-HNP1\n_vs_X") %>% 
+  str_replace_all("_"," ")
+
+rename_contrasts <- structure(c( "ClY21-HNP1\n_vs_IY16-HNP1", "ClY21-HNP1\n_vs_HNP1", "ClY21-HNP1\n_vs_X","IY16-HNP1\n_vs_HNP1", "IY16-HNP1\n_vs_X", "HNP1_vs_X\n" ) %>% str_replace_all("_"," "),
+                              names=c("Cl_vs_I" ,"Cl_vs_UM","Cl_vs_X", "I_vs_UM","I_vs_X", "UM_vs_X"))
+
+rcontrast <- lapply(res, function(x) rename_contrasts[x %>% pull(contrast)])
+renamed_res <- Map(cbind, res, rcontrast=rcontrast)
+
+names(renamed_res) <- rename_contrasts
+
+l <- renamed_res %>%
+  bind_rows() %>%
+  filter(baseMean>5) %>%
+  filter(cell_type %in% plot_cells, rcontrast %in% plot_contrasts) %>%
+  mutate(contrast_cell_type=paste0(rcontrast," ",cell_type)) %>%
+  mutate(contrast_cell_type=ifelse(grepl(" B", contrast_cell_type), paste0(contrast_cell_type," cells"),
+                                   contrast_cell_type)) %>%
+  split(f=.$contrast_cell_type) 
+
+plot_order <- c("HNP1_vs_X\n_B_cells","ClY21-HNP1\n_vs_X_B_cells", "IY16-HNP1\n_vs_X_B_cells", "HNP1_vs_X\n_Mono","ClY21-HNP1\n_vs_X_Mono", "IY16-HNP1\n_vs_X_Mono","HNP1_vs_X\n_DC","ClY21-HNP1\n_vs_X_DC", "IY16-HNP1\n_vs_X_DC" ) %>% str_replace_all("_"," ")
+
+l <- l[plot_order]
+
+  genes <- lapply(l, function(x) x %>%
+                    filter(!is.na(padj)) %>%
+                    arrange(pvalue))
+  lgenes <- lapply(genes, function(x) x$gene_name)
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = tmod)
+  
+  
+  
+  sgenes <- sapply(l, function(x) tmodDecideTests(x$gene_name, lfc = x$log2FoldChange,
+                                                  pval = x$padj, lfc.thr=0, pval.thr = 0.05, mset = tmod))
+  names(sgenes) <- names(l)
+  
+  ids <- c("LI.S11", "LI.M68", "LI.M67", 
+           "LI.M11.0", "DC.M3.4", "LI.M75", 
+           "LI.M165")
+  
+  f5b <- res.tmod %>%
+    lapply(function(x) x %>%
+             filter(ID %in% ids)) %>%
+    ggPanelplot(sgenes = sgenes, auc_thr = 0,
+                     q_thr = 1,
+                     filter_row_q = 1e-5,
+                     filter_row_auc = 0.70,
+                     q_cutoff = 1e-12,
+                    label_angle=90,add_ids = F, id_order=rev(ids)) +
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          axis.text.x=element_text(angle=0),
+          panel.background=element_blank(),
+          legend.key.size = unit(.1,"in"))+
+    guides(alpha=guide_legend(ncol=1))
+  print(f5b)
+  
+  
+  
+```
+
+
+We extend the pathway analysis to Reactome, Kegg and GO:BP databases.
+
+```{r add pathways, fig.width=25,fig.height=20,eval=T}
+library(tmod)
+data(tmod)
+
+
+df2tmod <- function(df, gene_id_col=ncol(df), module_id_col=1, module_title_col=2) {
+
+  require(tmod, quietly=TRUE)
+
+  gene_ids <- df[[gene_id_col]]
+  module_ids <- df[[module_id_col]]
+  m2g <- tapply(gene_ids, module_ids, list)
+  df[[gene_id_col]] <- NULL
+  df <- df[!duplicated(df[[module_id_col]]), ]
+  colnames(df)[module_id_col] <- "ID"
+  colnames(df)[module_title_col] <- "Title"
+
+  makeTmod(modules=df, modules2genes=m2g)
+}
+
+df <- as.data.frame(msigdbr::msigdbr(species='Homo sapiens'))
+df <- df[ , c("gs_name", "gs_id", "gs_cat", "gs_subcat", "gene_symbol") ]
+colnames(df) <- c("Title", "ID", "Category", "Subcategory", "GeneID")
+msig <- df2tmod(df[!is.na(df$GeneID),], gene_id_col=ncol(df), module_id_col=2, module_title_col=1)
+sel <- (msig$gs$Category %in% c("H"))  | (msig$gs$Subcategory %in% c('CP:REACTOME','GO:BP','CP:KEGG'))
+
+```
+
+
+```{r other pathways s7a, results=T, fig.width=8,fig.height=3}
+
+plot_cells <- c("B","Mono", "DC")
+
+
+plot_contrasts <- c("HNP1_vs_X\n", "ClY21-HNP1\n_vs_X", "IY16-HNP1\n_vs_X") %>% 
+  str_replace_all("_"," ")
+
+rename_contrasts <- structure(c( "ClY21-HNP1\n_vs_IY16-HNP1", "ClY21-HNP1\n_vs_HNP1", "ClY21-HNP1\n_vs_X","IY16-HNP1\n_vs_HNP1", "IY16-HNP1\n_vs_X", "HNP1_vs_X\n" ) %>% str_replace_all("_"," "),
+                              names=c("Cl_vs_I" ,"Cl_vs_UM","Cl_vs_X", "I_vs_UM","I_vs_X", "UM_vs_X"))
+
+rcontrast <- lapply(res, function(x) rename_contrasts[x %>% pull(contrast)])
+renamed_res <- Map(cbind, res, rcontrast=rcontrast)
+
+names(renamed_res) <- rename_contrasts
+
+
+
+l <- renamed_res %>%
+  bind_rows() %>%
+  filter(baseMean>5) %>%
+  filter(cell_type %in% plot_cells, rcontrast %in% plot_contrasts) %>%
+  mutate(contrast_cell_type=paste0(rcontrast," ",cell_type)) %>%
+  mutate(contrast_cell_type=ifelse(grepl(" B", contrast_cell_type), paste0(contrast_cell_type," cells"),
+                                   contrast_cell_type)) %>%
+  split(f=.$contrast_cell_type) 
+
+plot_order <- c("HNP1_vs_X\n_B_cells","ClY21-HNP1\n_vs_X_B_cells", "IY16-HNP1\n_vs_X_B_cells", "HNP1_vs_X\n_Mono","ClY21-HNP1\n_vs_X_Mono", "IY16-HNP1\n_vs_X_Mono","HNP1_vs_X\n_DC","ClY21-HNP1\n_vs_X_DC", "IY16-HNP1\n_vs_X_DC" ) %>% str_replace_all("_"," ")
+
+
+l <- l[plot_order]
+
+  genes <- lapply(l, function(x) x %>%
+                    filter(!is.na(padj)) %>%
+                    arrange(pvalue))
+  lgenes <- lapply(genes, function(x) x$gene_name)
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = msig[sel])
+  
+  
+  
+  sgenes <- sapply(l, function(x) tmodDecideTests(x$gene_name, lfc = x$log2FoldChange,
+                                                  pval = x$padj, lfc.thr=0, pval.thr = 0.05, mset = msig[sel]))
+  names(sgenes) <- names(l)
+  
+  # s7a <- ggPanelplot(res.tmod, sgenes = sgenes, auc_thr = 0,
+  #                    q_thr = 1,
+  #                    filter_row_q = 1e-5,
+  #                    filter_row_auc = 0.70,
+  #                    q_cutoff = 1e-12,
+  #                   label_angle=90,add_ids = T) +
+  #   theme(axis.text=element_text(size=8),
+  #         strip.text=element_text(size=8),
+  #         legend.text=element_text(size=8),
+  #         legend.title=element_text(size=8),
+  #         axis.title=element_text(size=8),
+  #         strip.text.x = element_text(hjust=0),
+  #         axis.text.x=element_text(angle=0),
+  #         panel.background=element_blank(),
+  #         legend.key.size = unit(.1,"in"))+
+  #   guides(alpha=guide_legend(ncol=1))
+  # print(s7a)
+
+ids <- c("M983", "M5928", "M42986", "M15907", "M10974", "M10214")
+s7a <- res.tmod %>% 
+  lapply(function(x) x %>% 
+           filter(ID %in% ids)) %>%
+  ggPanelplot(sgenes = sgenes, auc_thr = 0,
+                     q_thr = 1,
+                     filter_row_q = 1e-6,
+                     filter_row_auc = 0.70,
+                     q_cutoff = 1e-12,
+                    label_angle=90,add_ids = T) +
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          axis.text.x=element_text(angle=0),
+          panel.background=element_blank(),
+          legend.key.size = unit(.1,"in"))+
+    guides(alpha=guide_legend(ncol=1))
+  print(s7a)
+    
+  
+```
+
+
+Per contrast.
+```{r s6g_excluded, results=T, fig.width=8,fig.height=3}
+
+data(tmod)
+
+plot_cells <- c("B", "Mono", "CD4_T", "CD8_T", "DC")
+
+plot_contrasts <- c("ClY21-HNP1_vs_X") %>% str_replace_all("_"," ")
+
+rename_contrasts <- structure(c( "ClY21-HNP1\n_vs_IY16-HNP1", "ClY21-HNP1\n_vs_HNP1", "ClY21-HNP1_vs_X","IY16-HNP1\n_vs_HNP1", "IY16-HNP1\n_vs_X", "HNP1_vs_X\n" ) %>% str_replace_all("_"," "),
+                              names=c("Cl_vs_I" ,"Cl_vs_UM","Cl_vs_X", "I_vs_UM","I_vs_X", "UM_vs_X"))
+
+rcontrast <- lapply(res, function(x) rename_contrasts[x %>% pull(contrast)])
+renamed_res <- Map(cbind, res, rcontrast=rcontrast)
+
+names(renamed_res) <- rename_contrasts
+
+l <- renamed_res %>%
+  bind_rows() %>%
+  filter(baseMean>5) %>%
+  filter(cell_type %in% plot_cells, rcontrast %in% plot_contrasts) %>%
+  split(f=.$cell_type) 
+l <- l[plot_cells]
+
+  genes <- lapply(l, function(x) x %>%
+                    filter(!is.na(padj)) %>%
+                    arrange(pvalue))
+  lgenes <- lapply(genes, function(x) x$gene_name)
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = tmod)
+  
+  
+  
+  sgenes <- sapply(l, function(x) tmodDecideTests(x$gene_name, lfc = x$log2FoldChange,
+                                                  pval = x$padj, lfc.thr=0, pval.thr = 0.05, mset = tmod))
+  names(sgenes) <- names(l)
+  
+  s6g_excluded <- ggPanelplot(res.tmod, sgenes = sgenes, auc_thr = 0,
+                     q_thr = 1,
+                     filter_row_q = 1e-5,
+                     filter_row_auc = 0.70,
+                     q_cutoff = 1e-12,
+                    label_angle=90, add_ids = F) + 
+      ggtitle(plot_contrasts)+
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          plot.title=element_text(size=8),
+          axis.text.x=element_text(angle=0),
+          panel.background=element_blank(),
+          legend.key.size = unit(.1,"in"))
+  print(s6g_excluded)
+  
+
+  
+
+```
+
+
+Per contrast other pathways.
+```{r s7b, results=T, fig.width=8,fig.height=3}
+
+data(tmod)
+
+plot_cells <- c("B", "Mono", "CD4_T", "CD8_T", "DC")
+
+plot_contrasts <- c("ClY21-HNP1_vs_X") %>% str_replace_all("_"," ")
+
+rename_contrasts <- structure(c( "ClY21-HNP1\n_vs_IY16-HNP1", "ClY21-HNP1\n_vs_HNP1", "ClY21-HNP1_vs_X","IY16-HNP1\n_vs_HNP1", "IY16-HNP1\n_vs_X", "HNP1_vs_X\n" ) %>% str_replace_all("_"," "),
+                              names=c("Cl_vs_I" ,"Cl_vs_UM","Cl_vs_X", "I_vs_UM","I_vs_X", "UM_vs_X"))
+
+rcontrast <- lapply(res, function(x) rename_contrasts[x %>% pull(contrast)])
+renamed_res <- Map(cbind, res, rcontrast=rcontrast)
+
+names(renamed_res) <- rename_contrasts
+
+
+l <- renamed_res %>%
+  bind_rows() %>%
+  filter(baseMean>5) %>%
+  filter(cell_type %in% plot_cells, rcontrast %in% plot_contrasts) %>%
+  split(f=.$cell_type) 
+l <- l[plot_cells]
+
+  genes <- lapply(l, function(x) x %>%
+                    filter(!is.na(padj)) %>%
+                    arrange(pvalue))
+  lgenes <- lapply(genes, function(x) x$gene_name)
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = msig[sel])
+  
+  
+  
+  sgenes <- sapply(l, function(x) tmodDecideTests(x$gene_name, lfc = x$log2FoldChange,
+                                                  pval = x$padj, lfc.thr=0, pval.thr = 0.05, mset = msig[sel]))
+  names(sgenes) <- names(l)
+  
+  s7b <- ggPanelplot(res.tmod, sgenes = sgenes, auc_thr = 0,
+                     q_thr = 1,
+                     filter_row_q = 1e-5,
+                     filter_row_auc = 0.70,
+                     q_cutoff = 1e-12,
+                    label_angle=90, add_ids=T) + 
+      ggtitle(plot_contrasts)+
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          plot.title=element_text(size=8),
+          axis.text.x=element_text(angle=0),
+          panel.background=element_blank(),
+          legend.key.size = unit(.1,"in"))
+  print(s7b)
+  
+  
+ids <- c("M973", "M5928", "M16031","M15907", "M10974")
+s7b <- res.tmod %>% 
+  lapply(function(x) x %>% 
+           filter(ID %in% ids)) %>%
+  ggPanelplot(sgenes = sgenes, auc_thr = 0,
+                     q_thr = 1,
+                     filter_row_q = 1e-5,
+                     filter_row_auc = 0.70,
+                     q_cutoff = 1e-12,
+                    label_angle=90,add_ids = F) +
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          axis.text.x=element_text(angle=0),
+          panel.background=element_blank(),
+          legend.key.size = unit(.1,"in"))+
+    guides(alpha=guide_legend(ncol=1))
+print(s7b)
+
+
+```
+
+```{r s7c, results=T, fig.width=8,fig.height=3}
+
+data(tmod)
+
+plot_cells <- c("B", "Mono", "CD4_T", "CD8_T", "DC")
+
+plot_contrasts <- c("IY16-HNP1_vs_X") %>% str_replace_all("_"," ")
+
+rename_contrasts <- structure(c( "ClY21-HNP1\n_vs_IY16-HNP1", "ClY21-HNP1\n_vs_HNP1", "ClY21-HNP1_vs_X","IY16-HNP1\n_vs_HNP1", "IY16-HNP1_vs_X", "HNP1_vs_X\n" ) %>% str_replace_all("_"," "),
+                              names=c("Cl_vs_I" ,"Cl_vs_UM","Cl_vs_X", "I_vs_UM","I_vs_X", "UM_vs_X"))
+
+rcontrast <- lapply(res, function(x) rename_contrasts[x %>% pull(contrast)])
+renamed_res <- Map(cbind, res, rcontrast=rcontrast)
+
+names(renamed_res) <- rename_contrasts
+
+
+l <- renamed_res %>%
+  bind_rows() %>%
+  filter(baseMean>5) %>%
+  filter(cell_type %in% plot_cells, rcontrast %in% plot_contrasts) %>%
+  split(f=.$cell_type) 
+l <- l[plot_cells]
+
+  genes <- lapply(l, function(x) x %>%
+                    filter(!is.na(padj)) %>%
+                    arrange(pvalue))
+  lgenes <- lapply(genes, function(x) x$gene_name)
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = msig[sel])
+  
+  
+  
+  sgenes <- sapply(l, function(x) tmodDecideTests(x$gene_name, lfc = x$log2FoldChange,
+                                                  pval = x$padj, lfc.thr=0, pval.thr = 0.05, mset = msig[sel]))
+  names(sgenes) <- names(l)
+  
+  s7c <- ggPanelplot(res.tmod, sgenes = sgenes, auc_thr = 0,
+                     q_thr = 1,
+                     filter_row_q = 1e-7,
+                     filter_row_auc = 0.70,
+                     q_cutoff = 1e-12,
+                    label_angle=90, add_ids=T) + 
+      ggtitle(plot_contrasts)+
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          plot.title=element_text(size=8),
+          axis.text.x=element_text(angle=0),
+          panel.background=element_blank(),
+          legend.key.size = unit(.1,"in"))
+  print(s7c)
+  
+
+ids <- c("M983", "M42986", "M42828","M15907", "M11125","M10974")
+s7c <- res.tmod %>% 
+  lapply(function(x) x %>% 
+           filter(ID %in% ids)) %>%
+  ggPanelplot(sgenes = sgenes, auc_thr = 0,
+                     q_thr = 1,
+                     filter_row_q = 1e-5,
+                     filter_row_auc = 0.70,
+                     q_cutoff = 1e-12,
+                    label_angle=90,add_ids = T) +
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          axis.text.x=element_text(angle=0),
+          panel.background=element_blank(),
+          legend.key.size = unit(.1,"in"))+
+    guides(alpha=guide_legend(ncol=1))
+print(s7c)
+
+```
+
+
+```{r tmod3, results=T, fig.width=15,fig.height=10}
+
+data(tmod)
+
+contrasts <- names(res)
+
+plot_panels <- function(contrast){
+  # contrast <- contrasts[1]
+  l <- split(res[[contrast]], f=res[[contrast]]$cell_type)
+  genes <- lapply(l, function(x) x %>%
+                    filter(!is.na(padj)) %>%
+                    arrange(pvalue))
+  lgenes <- lapply(genes, function(x) x$gene_name)
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = tmod)
+  
+  
+  sgenes <- sapply(l, function(x) tmodDecideTests(x$gene_name, lfc = x$log2FoldChange,
+                                                  pval = x$padj, lfc.thr=0, pval.thr = 0.05, mset = tmod))
+  names(sgenes) <- names(l)
+  
+  
+  keep_results <- names(res.tmod)[sapply(res.tmod, function(x) x %>% filter(adj.P.Val<1e-4 , AUC >0.65)%>% nrow() >0)]
+  relevant_results <- res.tmod[keep_results]
+  cat_cell_type <- lapply(names(relevant_results), function(x) rep(x, nrow(relevant_results[[x]])))
+  relevant_results <- Map(cbind, relevant_results, cell_type=cat_cell_type)
+  
+  if(length(relevant_results)>0){
+    sgenes <- sgenes[names(relevant_results)]
+    p <- ggPanelplot(relevant_results, sgenes = sgenes, auc_thr = 0,
+                     q_thr = 1,
+                     filter_row_q = 1e-4,
+                     filter_row_auc = 0.65,
+                     q_cutoff = 1e-12) + 
+      ggtitle(contrast)
+    print(p)
+  }
+  
+  relevant_results <- do.call(rbind, relevant_results)
+  return(relevant_results)
+}
+
+res_tmod <- lapply(contrasts, plot_panels)
+names(res_tmod) <- contrasts
+res_tmod <- res_tmod[!sapply(res_tmod, function(x) length(x)==0)]
+
+```
+
+
+```{r f5f f5g, fig.width=4,fig.height=3}
+
+chemokine_modules <- c("LI.M27.1",
+                       "LI.M59")
+
+contrast <- "Cl_vs_X"
+module <- "LI.M27.1"
+module_full <- tmod$gs[tmod$gs$ID==module,"Title"]
+
+cell_type <- "B"
+
+l <- split(res[[contrast]], f=res[[contrast]]$cell_type)[cell_type]
+
+genes <- lapply(l, function(x) x %>%
+                  filter(!is.na(padj)) %>%
+                  arrange(pvalue))
+lgenes <- lapply(genes, function(x) x$gene_name)[[cell_type]]
+
+cols <- ifelse(genes[[cell_type]]$log2FoldChange >0 & genes[[cell_type]]$padj <0.05, "red",
+                  ifelse(genes[[cell_type]]$log2FoldChange <0 & genes[[cell_type]]$padj <0.05, "blue",
+                         ifelse(genes[[cell_type]]$padj>0.05, "grey", NA)))
+names(cols) <- lgenes
+
+tmod_pvalue <- res_tmod[[contrast]] %>%
+  filter(cell_type==cell_type) %>%
+  filter(ID==module) %>%
+  pull(adj.P.Val) %>%
+  signif(digits = 3)
+
+update_geom_defaults("text_repel", list(size = 2.5))
+f5f <- ggEvidencePlot(l = lgenes, m=module, mset = tmod, gene.colors = cols ) +
+  ggtitle(paste0(module_full,"\n","adj.P.val=",tmod_pvalue,"\n","ClY21-HNP1 vs X","\n",cell_type, " cells"))+
+  theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          plot.title=element_text(size=8))
+
+f5f
+
+
+contrast <- "Cl_vs_X"
+module <- "LI.M59"
+module_full <- tmod$gs[tmod$gs$ID==module,"Title"]
+
+cell_type <- "B"
+
+l <- split(res[[contrast]], f=res[[contrast]]$cell_type)[cell_type]
+
+genes <- lapply(l, function(x) x %>%
+                  filter(!is.na(padj)) %>%
+                  arrange(pvalue))
+lgenes <- lapply(genes, function(x) x$gene_name)[[cell_type]]
+
+cols <- ifelse(genes[[cell_type]]$log2FoldChange >0 & genes[[cell_type]]$padj <0.05, "red",
+                  ifelse(genes[[cell_type]]$log2FoldChange <0 & genes[[cell_type]]$padj <0.05, "blue",
+                         ifelse(genes[[cell_type]]$padj>0.05, "grey", NA)))
+names(cols) <- lgenes
+
+tmod_pvalue <- res_tmod[[contrast]] %>%
+  filter(cell_type==cell_type) %>%
+  filter(ID==module) %>%
+  pull(adj.P.Val) %>%
+  signif(digits = 3)
+
+update_geom_defaults("text_repel", list(size = 2.5))
+f5g <- ggEvidencePlot(l = lgenes, m=module, mset = tmod, gene.colors = cols ) +
+  ggtitle(paste0(module_full,"\n","adj.P.val=",tmod_pvalue,"\n","ClY21-HNP1 vs X","\n",cell_type, " cells"))+
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          plot.title=element_text(size=8))
+
+f5g
+
+
+```
+
+
+
+```{r s7d s7e, fig.width=4,fig.height=3}
+
+contrast <- "I_vs_X"
+module <- "LI.M27.1"
+module_full <- tmod$gs[tmod$gs$ID==module,"Title"]
+
+cell_type <- "Mono"
+
+l <- split(res[[contrast]], f=res[[contrast]]$cell_type)[cell_type]
+
+genes <- lapply(l, function(x) x %>%
+                  filter(!is.na(padj)) %>%
+                  arrange(pvalue))
+lgenes <- lapply(genes, function(x) x$gene_name)[[cell_type]]
+
+cols <- ifelse(genes[[cell_type]]$log2FoldChange >0 & genes[[cell_type]]$padj <0.05, "red",
+                  ifelse(genes[[cell_type]]$log2FoldChange <0 & genes[[cell_type]]$padj <0.05, "blue",
+                         ifelse(genes[[cell_type]]$padj>0.05, "grey", NA)))
+names(cols) <- lgenes
+
+tmod_pvalue <- res_tmod[[contrast]] %>%
+  filter(cell_type==cell_type) %>%
+  filter(ID==module) %>%
+  pull(adj.P.Val) %>%
+  signif(digits = 3)
+
+update_geom_defaults("text_repel", list(size = 2.5))
+s7d <- ggEvidencePlot(l = lgenes, m=module, mset = tmod, gene.colors = cols ) +
+  ggtitle(paste0(module_full,"\n","adj.P.val=",tmod_pvalue,"\n","IY16-HNP1 vs X","\n",cell_type, "cytes"))+
+  theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          plot.title=element_text(size=8))
+
+s7d
+
+
+contrast <- "I_vs_X"
+module <- "DC.M5.12"
+module_full <- tmod$gs[tmod$gs$ID==module,"Title"]
+
+cell_type <- "Mono"
+
+l <- split(res[[contrast]], f=res[[contrast]]$cell_type)[cell_type]
+
+genes <- lapply(l, function(x) x %>%
+                  filter(!is.na(padj)) %>%
+                  arrange(pvalue))
+lgenes <- lapply(genes, function(x) x$gene_name)[[cell_type]]
+
+cols <- ifelse(genes[[cell_type]]$log2FoldChange >0 & genes[[cell_type]]$padj <0.05, "red",
+                  ifelse(genes[[cell_type]]$log2FoldChange <0 & genes[[cell_type]]$padj <0.05, "blue",
+                         ifelse(genes[[cell_type]]$padj>0.05, "grey", NA)))
+names(cols) <- lgenes
+
+tmod_pvalue <- res_tmod[[contrast]] %>%
+  filter(cell_type==cell_type) %>%
+  filter(ID==module) %>%
+  pull(adj.P.Val) %>%
+  signif(digits = 3)
+
+update_geom_defaults("text_repel", list(size = 2.5))
+s7e <- ggEvidencePlot(l = lgenes, m=module, mset = tmod, gene.colors = cols ) +
+  ggtitle(paste0(module_full,"\n","adj.P.val=",tmod_pvalue,"\n","IY16-HNP1 vs X","\n",cell_type, "cytes"))+
+    theme(axis.text=element_text(size=8),
+          strip.text=element_text(size=8),
+          legend.text=element_text(size=8),
+          legend.title=element_text(size=8),
+          axis.title=element_text(size=8),
+          strip.text.x = element_text(hjust=0),
+          plot.title=element_text(size=8))
+
+s7e
+
+
+```
+
+
+```{r fig5,fig.width=8,fig.height=12}
+
+(f5a + plot_spacer()) /
+  wrap_elements(f5b) /
+  (((f5c | f5d |f5e ) +plot_layout(guides="collect")))/
+  (f5f|f5g)+
+  plot_layout(heights = c(.8,1.2,.8,.7)) +
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(size = 8, face = "bold",hjust = -.5, vjust = 0))
+
+```
+
+```{r save}
+
+ggsave(file.path(path,results_dir,"fig5.pdf"), device = cairo_pdf,width=8,height=12)
+
+```
+
+
+Supplement: Show cell type proportion (l1).
+
+```{r prop,fig.width=8,fig.height=3}
+
+my_comparisons <- list(c("UM","X"),
+                       c("Cl","X"),
+                       c("I","X"))
+
+plot_groups <- unlist(my_comparisons) %>% unique
+
+plot_cells <- c("B", "CD4 T", "CD8 T", "Mono", "DC")
+
+
+s6b <- sobj[[]] %>%
+  select(sample,group,predicted.celltype.l1) %>%
+  group_by(sample,group,predicted.celltype.l1) %>%
+  summarise(n=n()) %>%
+  mutate(tot_cells=sum(n),pct.cells=n/sum(n)*100) %>%
+  ungroup() %>%
+  filter(group %in% plot_groups, predicted.celltype.l1 %in% plot_cells) %>%
+  ggplot(aes(group,pct.cells,colour=group))+
+  geom_point(position=position_jitterdodge(jitter.width = .3),shape=1)+
+  #stat_compare_means(method="t.test", paired=F,comparisons = my_comparisons,label = "p.format",size=3)+
+  facet_wrap(~predicted.celltype.l1, strip.position = "top",nrow=1)+
+  scale_colour_manual(labels=c("ClY21-HNP1", "IY16-HNP1", "HNP1", "X" ), values=c("dodgerblue3","orange2", "darkgreen","grey20"))+
+  theme_classic()+
+  theme(axis.text.x=element_blank(),
+        strip.background = element_blank(),
+        legend.title=element_blank(),
+        strip.text=element_text(size=8),
+        axis.text=element_text(size=8),
+        axis.title=element_text(size=8),
+        legend.text=element_text(size=8),
+        legend.position = "bottom")+
+  labs(y=c("% cells"),x=c())
+s6b
+
+```
+
+```{r s6a}
+
+md <- sobj[[]] %>%
+  select(sample,nCount_RNA ,nFeature_RNA,predicted.celltype.l1.score,predicted.celltype.l2.score) %>%
+  dplyr::group_by(sample) %>%
+  dplyr::mutate(sample=paste0(sample,' (n=',n(),')')) %>%
+  gather(metric,value,-sample)
+
+s6a <- ggplot(md,aes(x=sample,y=value,fill=sample)) + 
+  geom_violin(scale='width') +
+  facet_wrap(~metric,scales='free_y',ncol=2) + 
+  theme_classic() + 
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=.5),
+        legend.position='none',
+        strip.background = element_blank(),
+        strip.text = element_text(size=8),
+        axis.text=element_text(size=8)) + 
+  labs(x='',y='')
+
+s6a
+
+```
+
+
+```{r sfig6,fig.width=8,fig.height=12}
+
+ wrap_elements(s6a) / 
+  wrap_elements(s6b) /
+  (wrap_elements(s6c)|wrap_elements(s6d)) /
+  (wrap_elements((s6e|s6f)+plot_layout(guides="collect"))) +
+  plot_layout(heights = c(1.4,1,1,1)) +
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(size = 8, face = "bold",hjust = -.5, vjust = 0))
+
+
+```
+
+```{r save supp 1}
+
+ggsave(file.path(path,results_dir,"Sfig6.pdf"), device = cairo_pdf,width=8,height=12)
+```
+
+```{r sfig7,fig.width=8,fig.height=12}
+
+wrap_elements(s7a) / 
+  wrap_elements(s7b) /
+  wrap_elements(s7c) /
+  (s7d + s7e) +
+  plot_layout(heights = c(1.2,1.2,1.2,.8)) +
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(size = 8, face = "bold",hjust = -.5, vjust = 0))
+
+
+```
+
+```{r save supp 2}
+
+ggsave(file.path(path,results_dir,"Sfig7.pdf"), device = cairo_pdf,width=8,height=12)
+```
+
+
+```{r sfig8,fig.width=8,fig.height=3}
+
+ (wrap_elements((s8a | s8b |s8c ) +plot_layout(guides="collect")))+
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(size = 8, face = "bold",hjust = -.5, vjust = 0))
+
+
+```
+
+
+```{r save supp 3}
+
+ggsave(file.path(path,results_dir,"Sfig8.pdf"), device = cairo_pdf,width=8,height=3)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r plot chemokine genes}
+
+chemokine_modules <- c("LI.M27.1",
+                       "LI.M59")
+
+contrast <- "Cl_vs_X"
+module <- "LI.M27.1"
+module_full <- tmod$gs[tmod$gs$ID==module,"Title"]
+
+cell_type <- "B"
+
+genes_in_gene_set <- 
+  tmod$gv[tmod$gs2gv[[which(tmod$gs$ID==module)]]]
+
+
+
+# df_colors <- res[[contrast]] %>% 
+#   filter(gene_name %in% genes_in_gene_set, cell_type==cell_type) %>%
+#   mutate(color=ifelse(log2FoldChange >0 & padj < .05, "red",
+#                       ifelse(log2FoldChange <0 & padj < .05, "blue",
+#                              "grey"))) %>%
+#   select(gene_name,color)
+# 
+# gene.colors <- df_colors$color
+# names(gene.colors) <- df_colors$gene_name
+
+
+
+
+p10 <- res[[contrast]] %>%                  
+    dplyr::filter(!is.na(padj), baseMean>10, cell_type=="B") %>%
+    ggplot(aes(x=log2FoldChange,y=-log10(pvalue),color=padj < .05)) + 
+    geom_point(size=.5, shape=1) +
+    geom_label_repel(data=res[[contrast]] %>% 
+                       dplyr::filter(!is.na(padj), baseMean>10, cell_type=="B",gene_name %in% genes_in_gene_set),
+                       aes(label=gene_name),
+                     segment.size=.25,segment.alpha=.5,size=3,color='black',max.overlaps=30,
+                     label.padding=0.05,label.size=NA) +
+    scale_color_manual(values=c('black','red')) +
+    theme_classic() +
+    theme(legend.position='none',
+          strip.background=element_blank())+
+    ggtitle(paste0(contrast, " B cells"))
+print(p10)
+
+
+contrast <- "I_vs_X"
+p11 <- res[[contrast]] %>%                  
+    dplyr::filter(!is.na(padj), baseMean>10, cell_type=="B") %>%
+    ggplot(aes(x=log2FoldChange,y=-log10(pvalue),color=padj < .05)) + 
+    geom_point(size=.5, shape=1) +
+    geom_label_repel(data=res[[contrast]] %>% 
+                       dplyr::filter(!is.na(padj), baseMean>10, cell_type=="B",gene_name %in% genes_in_gene_set),
+                       aes(label=gene_name),
+                     segment.size=.25,segment.alpha=.5,size=3,color='black',max.overlaps=30,
+                     label.padding=0.05,label.size=NA) +
+    scale_color_manual(values=c('black','red')) +
+    theme_classic() +
+    theme(legend.position='none',
+          strip.background=element_blank())+
+    ggtitle(paste0(contrast, " B cells"))
+print(p11)
+
+contrast <- "UM_vs_X"
+p12<- res[[contrast]] %>%                  
+    dplyr::filter(!is.na(padj), baseMean>10, cell_type=="B") %>%
+    ggplot(aes(x=log2FoldChange,y=-log10(pvalue),color=padj < .05)) + 
+    geom_point(size=.5, shape=1) +
+    geom_label_repel(data=res[[contrast]] %>% 
+                       dplyr::filter(!is.na(padj), baseMean>10, cell_type=="B",gene_name %in% genes_in_gene_set),
+                       aes(label=gene_name),
+                     segment.size=.25,segment.alpha=.5,size=3,color='black',max.overlaps=30,
+                     label.padding=0.05,label.size=NA) +
+    scale_color_manual(values=c('black','red')) +
+    theme_classic() +
+    theme(legend.position='none',
+          strip.background=element_blank())+
+    ggtitle(paste0(contrast, " B cells"))
+print(p12)
+
+```
+
+concordance disco plot
+
+```{r conc}
+
+cont1 <- "Cl_vs_X"
+cont2 <- "I_vs_X"
+
+
+df <- data.frame(gene_name=res[[cont1]]$gene_name,
+                 log2FoldChange_cont1=res[[cont1]]$log2FoldChange,
+                 padj_cont1=res[[cont1]]$padj,
+                 log2FoldChange_cont2=res[[cont2]]$log2FoldChange,
+                 padj_cont2=res[[cont2]]$padj,
+                 cell_type=res[[cont1]]$cell_type)
+
+df <- df %>%
+  mutate(regulation1=ifelse(log2FoldChange_cont1>0 & padj_cont1 < 0.05 , "up_cont1",
+                            ifelse(log2FoldChange_cont1<0 & padj_cont1 < 0.05 , "down_cont1",NA)),
+         regulation2=ifelse(log2FoldChange_cont2>0 & padj_cont2 < 0.05 , "up_cont2",
+                            ifelse(log2FoldChange_cont2<0& padj_cont2 < 0.05 , "down_cont2",NA)),
+         regulation=ifelse(regulation1=="up_cont1" & regulation2=="down_cont2", "up_down",
+                           ifelse(regulation1=="up_cont1" & regulation2=="up_cont2", "up_up",
+                                  ifelse(regulation1=="down_cont1" & regulation2=="up_cont2", "down_up",
+                                         ifelse(regulation1=="down_cont1" & regulation2=="down_cont2", "down_down",NA)))))
+                         
+
+
+df %>% 
+  filter(cell_type=="B") %>%
+  filter(!is.na(padj_cont1) | !is.na(padj_cont2) ) %>%
+  ggplot(aes(log2FoldChange_cont1 ,log2FoldChange_cont2, color=regulation ))+
+  geom_abline(slope = 1,lty=2)+
+  geom_point(size=1,shape=1)+
+  geom_label_repel(data=df %>% 
+                     filter(cell_type=="B",gene_name %in% genes_in_gene_set) %>%
+                     filter(!is.na(padj_cont1) | !is.na(padj_cont2) ),
+                   aes(label=gene_name),
+                   segment.size=.25,segment.alpha=.5,size=3,color='black',max.overlaps=100,
+                   label.padding=0.05,label.size=NA) +
+  theme_classic() +
+  theme(strip.background=element_blank())
+```
+
+
+
+
+
+```{r ma, fig.height=25, fig.width=10, eval=F}
+
+for (comparison in unique(res_df$contrast)){
+  p <- res_df %>%
+    dplyr::filter(contrast == comparison) %>%
+    ggplot(aes(x=baseMean,y=log2FoldChange,color=padj < .05)) +
+    geom_point(size=.5, shape=1) +
+    geom_label_repel(data=res_df %>%
+                       dplyr::filter(contrast == comparison, padj < .05),
+                     aes(label=gene_name),
+                     segment.size=.25,segment.alpha=.5,size=3,color='black',max.overlaps=50,
+                     label.padding=0.05,label.size=NA) +
+    scale_color_manual(values=c('black','red')) +
+    scale_x_continuous(trans='log10') +
+    coord_cartesian(ylim =c(-3,3)) +
+    theme_classic() +
+    theme(legend.position='none',
+          strip.background=element_blank())+
+    xlab("mean normalized counts")+
+    ggtitle(comparison)+
+    facet_wrap(~cell_type, ncol = 2)
+  print(p)
+}
+``` 
+
+
+
+
+
+```{r session}
+
+sessionInfo()
+
+```
+
+

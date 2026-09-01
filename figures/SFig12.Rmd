@@ -1,0 +1,80 @@
+---
+title: "Supplementary Figure 12"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+params:
+  de_dir: "../data/intermediate/de_results"
+  output_dir: "../output/SFig12"
+date: "`r Sys.Date()`"
+---
+
+"HNPs upregulate proinflammatory genes" - tmod BTM gene set enrichment per
+cell type for the three vs-vehicle contrasts (AUC > 0.70, q < 1e-10, as
+stated in the figure legend).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(patchwork)
+  library(tmod)
+})
+source("../R/plot_theme.R")
+source("../R/io_helpers.R")
+source("../R/panel_helpers.R")
+
+de <- load_de_results(params$de_dir)
+res_by_contrast <- de$by_contrast
+data(tmod)
+```
+
+```{r panels, fig.width=8, fig.height=3}
+panel_a <- tmod_panel_by_celltype(res_by_contrast, "UM_vs_X", q_filter = 1e-10, auc_filter = 0.7, title = "HNP1 vs vehicle")
+panel_b <- tmod_panel_by_celltype(res_by_contrast, "Cl_vs_X", q_filter = 1e-10, auc_filter = 0.7, title = "ClY21-HNP1 vs vehicle")
+panel_c <- tmod_panel_by_celltype(res_by_contrast, "I_vs_X", q_filter = 1e-10, auc_filter = 0.7, title = "IY16-HNP1 vs vehicle")
+panel_a
+panel_b
+panel_c
+```
+
+```{r assembly, fig.width=8, fig.height=9}
+sfig12 <- wrap_elements(panel_a) / wrap_elements(panel_b) / wrap_elements(panel_c) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 8, face = "bold", hjust = -.5, vjust = 0))
+sfig12
+```
+
+```{r panel data}
+tmod_panel_data <- function(contrast, q_filter, auc_filter) {
+  # Mirrors tmod_panel_by_celltype()'s filter_row_q/filter_row_auc row
+  # selection (R/panel_helpers.R, same q_filter/auc_filter values passed to
+  # ggPanelplot() there) - a module (row) is kept, across every cell type
+  # column, if it passes the threshold in at least one cell type; previously
+  # this kept an entire cell type's full, unfiltered module list as soon as
+  # *any* one module in it passed, which is a much larger set than what the
+  # heatmap actually draws as rows.
+  l <- res_by_contrast[[contrast]] %>% filter(cell_type != "all") %>% split(.$cell_type)
+  lgenes <- lapply(l, function(x) x %>% filter(!is.na(padj)) %>% arrange(pvalue) %>% pull(gene_name))
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = tmod)
+  combined <- Map(cbind, res.tmod, cell_type = names(res.tmod)) %>% bind_rows()
+  keep_ids <- combined %>% filter(adj.P.Val < q_filter, AUC > auc_filter) %>% pull(ID) %>% unique()
+  combined %>% filter(ID %in% keep_ids)
+}
+data_a <- tmod_panel_data("UM_vs_X", 1e-10, 0.7)
+data_b <- tmod_panel_data("Cl_vs_X", 1e-10, 0.7)
+data_c <- tmod_panel_data("I_vs_X", 1e-10, 0.7)
+```
+
+```{r save}
+save_figure_pdf(sfig12, file.path(params$output_dir, "SFig12.pdf"), width = 8, height = 9)
+write_panel_xlsx(
+  list(A_tmod_UMvsX = data_a, B_tmod_ClvsX = data_b, C_tmod_IvsX = data_c),
+  file.path(params$output_dir, "SFig12_data.xlsx")
+)
+```
+
+```{r session info}
+sessionInfo()
+```

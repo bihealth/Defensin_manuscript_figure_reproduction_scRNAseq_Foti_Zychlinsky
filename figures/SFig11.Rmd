@@ -1,0 +1,202 @@
+---
+title: "Supplementary Figure 11"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+params:
+  pbmc_rds: "../data/intermediate/20250919_pbmc_reproduced.rds"
+  sample_table_final12: "../sample_tables/sample_table_final12.txt"
+  counts_l1_final12: "SFig11_data/counts_l1_final12.tsv"
+  sample_table_full16: "../sample_tables/sample_table_donor3_swap_check.txt"
+  counts_l1_full16: "SFig11_data/counts_l1_full16_donor3swap.tsv"
+  output_dir: "../output/SFig11"
+date: "`r Sys.Date()`"
+---
+
+"scRNA sequencing quality control (QC)." See
+[`../docs/donor3_exclusion.md`](../docs/donor3_exclusion.md) for the story
+behind panels A and E.
+
+Panels B-D use the final 12-sample annotated object (`20250919_pbmc.rds`).
+Panels A and E are pseudobulk PCAs on two different sample sets (all 16
+samples including donor 3, vs. the final 12); both underlying count tables
+are vendored in [`SFig11_data/`](SFig11_data/) (see its README for exact
+provenance and why panel A pairs with the donor-3 barcode-swap-check sample
+table rather than the original unswapped one) — **no preprocessing needs to
+be re-run to reproduce this figure.**
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(DESeq2)
+  library(RColorBrewer)
+  library(patchwork)
+})
+source("../R/plot_theme.R")
+source("../R/io_helpers.R")
+
+require_files(c(
+  pbmc_rds = params$pbmc_rds,
+  sample_table_final12 = params$sample_table_final12,
+  counts_l1_final12 = params$counts_l1_final12,
+  sample_table_full16 = params$sample_table_full16,
+  counts_l1_full16 = params$counts_l1_full16
+))
+sobj <- readRDS(params$pbmc_rds)
+```
+
+## B - Per-sample QC metrics
+
+```{r panel B, fig.width=8, fig.height=5}
+data_b <- sobj[[]] %>%
+  select(sample, nCount_RNA, nFeature_RNA, predicted.celltype.l1.score, predicted.celltype.l2.score) %>%
+  group_by(sample) %>%
+  mutate(sample_n = paste0(sample, " (n=", n(), ")")) %>%
+  ungroup()
+
+metric_labels <- c(nCount_RNA = "# transcripts/cell", nFeature_RNA = "# genes/cell",
+                    predicted.celltype.l1.score = "predicted celltype l1 score",
+                    predicted.celltype.l2.score = "predicted celltype l2 score")
+
+panel_b <- data_b %>%
+  pivot_longer(c(nCount_RNA, nFeature_RNA, predicted.celltype.l1.score, predicted.celltype.l2.score),
+               names_to = "metric", values_to = "value") %>%
+  ggplot(aes(x = sample_n, y = value, fill = sample_n)) +
+  geom_violin(scale = "width") +
+  facet_wrap(~metric, scales = "free_y", ncol = 2, labeller = as_labeller(metric_labels)) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5), legend.position = "none",
+        strip.background = element_blank(), strip.text = element_text(size = panel_theme_size),
+        axis.text = element_text(size = panel_theme_size)) +
+  labs(x = "", y = "")
+panel_b
+```
+
+## C - Cell type proportions per group
+
+```{r panel C, fig.width=8, fig.height=3}
+plot_cells <- c("B", "CD4 T", "CD8 T", "Mono", "DC")
+
+data_c <- sobj[[]] %>%
+  select(sample, group, predicted.celltype.l1) %>%
+  group_by(sample, group, predicted.celltype.l1) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(sample) %>%
+  mutate(pct.cells = n / sum(n) * 100) %>%
+  ungroup() %>%
+  filter(group %in% names(treatment_labels), predicted.celltype.l1 %in% plot_cells)
+
+panel_c <- data_c %>%
+  ggplot(aes(group, pct.cells, colour = group)) +
+  geom_point(position = position_jitterdodge(jitter.width = .3), shape = 1) +
+  facet_wrap(~predicted.celltype.l1, strip.position = "top", nrow = 1) +
+  scale_colour_manual(labels = treatment_labels[c("Cl", "I", "UM", "X")],
+                       values = treatment_colors[c("Cl", "I", "UM", "X")]) +
+  theme_classic() +
+  theme(axis.text.x = element_blank(), strip.background = element_blank(), legend.title = element_blank(),
+        strip.text = element_text(size = panel_theme_size), axis.text = element_text(size = panel_theme_size),
+        axis.title = element_text(size = panel_theme_size), legend.text = element_text(size = panel_theme_size),
+        legend.position = "bottom") +
+  labs(y = "% cells", x = NULL)
+panel_c
+```
+
+## D - Marker gene expression per cell type
+
+```{r panel D, fig.width=4, fig.height=3}
+Idents(sobj) <- "predicted.celltype.l1"
+marker_features <- c("PTPRC", "CD8A", "CD4", "GZMK", "CCL5", "S100A4", "ANXA1", "CCR7", "ISG15",
+                      "CD3D", "CD3E", "CD19", "CSF1R", "S100A8", "MS4A2", "CD14", "CD1C", "NCAM1")
+
+panel_d <- DotPlot(sobj, features = marker_features, dot.scale = 3) +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 10, name = "RdBu"))) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5, size = panel_theme_size),
+        axis.text.y = element_text(size = panel_theme_size), legend.position = "top",
+        legend.text = element_text(size = panel_theme_size), legend.title = element_text(size = panel_theme_size)) +
+  labs(x = NULL, y = NULL)
+panel_d
+
+data_d <- panel_d$data
+```
+
+## A, E - Pseudobulk PCA (all cells), with and without donor 3
+
+```{r pca fn}
+pca_panel <- function(counts_path, sample_table_path, title) {
+  counts <- read.delim(counts_path) %>% tibble::column_to_rownames("gene_name")
+  sample_table <- read.delim(sample_table_path)
+  colData <- data.frame(sample_name = factor(colnames(counts)),
+                         cell_type = factor(sub("_s.*", "", colnames(counts))),
+                         sample = factor(sub(".*_s", "s", colnames(counts)))) %>%
+    left_join(sample_table, by = "sample") %>%
+    mutate(batch = factor(batch)) %>%
+    filter(cell_type == "all")
+
+  dds <- DESeqDataSetFromMatrix(countData = as.matrix(counts[, colData$sample_name]), colData = colData, design = ~1) %>% DESeq()
+  rld <- vst(dds)
+  # NB: colData has both a "treatment" and a "group" column (identical
+  # values). DESeq2's plotPCA(), when intgroup has length > 1, builds its
+  # own synthetic "group" column (an interaction/paste of every intgroup
+  # variable) in the returned data - since colData already has a column
+  # literally named "group", that gets shadowed by the paste and silently
+  # plots "condition:donor" instead of condition alone. Use "treatment"
+  # (not "group") as the intgroup name so nothing collides.
+  pca_data <- plotPCA(rld, intgroup = c("treatment", "batch"), returnData = TRUE)
+
+  list(
+    plot = ggplot(pca_data, aes(PC1, PC2, color = treatment, shape = batch)) +
+      geom_point(size = 2) + theme_classic() + ggtitle(title) +
+      theme(axis.text = element_text(size = panel_theme_size), axis.title = element_text(size = panel_theme_size),
+            legend.text = element_text(size = panel_theme_size), legend.title = element_text(size = panel_theme_size),
+            plot.title = element_text(size = panel_theme_size)) +
+      scale_colour_discrete(labels = treatment_labels) +
+      guides(colour = guide_legend(title = "condition"), shape = guide_legend(title = "donor")),
+    data = pca_data
+  )
+}
+
+pca_full16 <- pca_panel(params$counts_l1_full16, params$sample_table_full16,
+                         "All 16 samples")
+pca_final12 <- pca_panel(params$counts_l1_final12, params$sample_table_final12,
+                          "Final 12 samples")
+panel_a <- pca_full16$plot
+panel_e <- pca_final12$plot
+data_a <- pca_full16$data
+data_e <- pca_final12$data
+```
+
+```{r show pca, fig.width=4, fig.height=3}
+panel_a
+panel_e
+```
+
+## Assembly
+
+```{r assembly, fig.width=8, fig.height=12}
+sfig11 <-( plot_spacer()+(panel_a)+plot_spacer() +plot_layout(widths=c(0.8,1,0.8)) )/
+  wrap_elements(panel_b) /
+  wrap_elements(panel_c) /
+  (wrap_elements(panel_d) | wrap_elements(panel_e)) +
+  plot_layout(heights = c(1, 1.4, 1, 1)) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 8, face = "bold", hjust = -.5, vjust = 0))
+sfig11
+```
+
+```{r save}
+save_figure_pdf(sfig11, file.path(params$output_dir, "SFig11.pdf"), width = 8, height = 12)
+write_panel_xlsx(
+  list(A_pca_donor3_included = data_a, B_qc_metrics = data_b, C_celltype_pct = data_c,
+       D_marker_dotplot = data_d, E_pca_final = data_e),
+  file.path(params$output_dir, "SFig11_data.xlsx")
+)
+```
+
+```{r session info}
+sessionInfo()
+```

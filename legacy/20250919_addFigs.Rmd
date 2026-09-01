@@ -1,0 +1,138 @@
+---
+output: 
+  html_document:
+    df_print: paged
+    code_folding: hide
+params:
+  title: "figures 190925"
+  shrinkage_type: "normal"
+title: "`r params$title`"
+---
+
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, cache=FALSE, cache.lazy=FALSE, message=FALSE, warning=FALSE)
+
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(gtools))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(cowplot))
+# suppressPackageStartupMessages(library(rstatix))
+suppressPackageStartupMessages(library(DESeq2))
+suppressPackageStartupMessages(library(ggrepel))
+suppressPackageStartupMessages(library(stringr))
+suppressPackageStartupMessages(library(tmod))
+suppressPackageStartupMessages(library(DT))
+suppressPackageStartupMessages(library(ggpubr))
+suppressPackageStartupMessages(library(patchwork))
+
+
+
+options(future.globals.maxSize = 12 * 1024 * 1024^2)
+
+path <- "/data/cephfs-1/work/groups/cubi/projects/2022-04-27_CSCS_Miha/foti_redone/downstream_analysis/"
+
+results_dir <- "20250919_results/figures"
+dir.create("figures", showWarnings = FALSE, recursive = T)
+
+# environment R-fixed-biomart-deseq
+
+sample_table <- read.delim(file.path(path,"sample_table_20250919_renamed.txt"))
+
+plot_names <- structure(c("HNP1", "ClY21-HNP1", "IY16-HNP1"), names=c("UM", "Cl", "I"))
+
+```
+
+
+Bulk data.
+
+```{r load bulk de results, fig.width=8,fig.height=12}
+
+files <- list.files("/data/cephfs-1/work/groups/cubi/projects/2022-04-27_CSCS_Miha/foti_redone/downstream_analysis/20250910_results/bulk_data", pattern = ".*csv", full.names = T)
+
+df_bulk <- lapply(files, read.delim, sep=";", header=T)
+names(df_bulk) <- sub("\\..*","",sub(".*\\/","",files))
+```
+
+
+```{r bulk cl, fig.height=3,fig.width=3}
+
+conts <- c("IY16-HNP1_vs_vehicle",
+           "ClY21-HNP1_vs_vehicle")
+
+df <- full_join(df_bulk[[conts[1]]], df_bulk[[conts[2]]], by="gene_id") %>%
+  select(gene_id, gene_name.x, gene_name.y, log2FoldChange.x, padj.x, log2FoldChange.y, padj.y) %>%
+  rename(log2FoldChange.x="log2FoldChange_I_vs_X",
+         padj.x="padj_I_vs_X",
+         log2FoldChange.y="log2FoldChange_Cl_vs_X",
+         padj.y="padj_Cl_vs_X",
+         gene_name.x="gene_name_I_vs_X",
+         gene_name.y="gene_name_Cl_vs_X") %>% 
+  mutate(Cl_change=ifelse(padj_Cl_vs_X<0.05 & log2FoldChange_Cl_vs_X>0, "up-Cl",
+                                  ifelse(padj_Cl_vs_X<0.05 & log2FoldChange_Cl_vs_X<0, "down-Cl",
+                                         ifelse(!is.na(padj_Cl_vs_X), "unch-Cl", NA))))%>%
+  mutate(I_change=ifelse(padj_I_vs_X<0.05 & log2FoldChange_I_vs_X>0, "up-I",
+                                  ifelse(padj_I_vs_X<0.05 & log2FoldChange_I_vs_X<0, "down-I",
+                                         ifelse(!is.na(padj_I_vs_X), "unch-I", NA)))) %>%
+  mutate(change=ifelse(Cl_change=="up-Cl" & I_change=="up-I", "up-Cl_I",
+                       ifelse(Cl_change=="down-Cl" & I_change=="down-I", "down-Cl_I",
+                              ifelse(Cl_change=="up-Cl" & I_change %in% c("unch-I", NA), "up-Cl_only",
+                                     ifelse(Cl_change=="down-Cl" & I_change %in% c("unch-I", NA), "down-Cl_only",
+                                            ifelse(I_change=="up-I" & Cl_change %in% c("unch-Cl", NA), "up-I_only",
+                                                   ifelse(I_change=="down-I" & Cl_change %in% c("unch-Cl", NA), "down-I_only",
+                                                          ifelse(Cl_change=="unch-Cl" & I_change=="unch-I", "unch_Cl_I", NA)))))))) %>%
+  mutate(regulation=ifelse(change %in% c("up-Cl","down-Cl","up-I","down-I","up-Cl_I","down-Cl_I"), "regulated", "not_regulated"))
+
+
+top50 <- df %>% 
+  filter(!grepl("DEPRECATED", gene_name_Cl_vs_X) & !grepl("^ENSG", gene_name_Cl_vs_X)) %>%
+  filter(regulation == "regulated") %>%
+  slice_min(order_by=padj_Cl_vs_X, n=50, with_ties = F) %>%
+           pull(gene_name_Cl_vs_X)
+
+```
+
+
+```{r bulk Cl, fig.width=3,fig.height=3}
+
+df %>%
+  filter(padj_Cl_vs_X<0.05 | padj_I_vs_X < 0.05) %>%
+  mutate(label=ifelse(gene_name_Cl_vs_X %in% top50, gene_name_Cl_vs_X, NA),
+         color=ifelse(gene_name_Cl_vs_X %in% top50, -log10(padj_Cl_vs_X), NA)) %>%
+  ggplot(aes(log2FoldChange_I_vs_X ,log2FoldChange_Cl_vs_X, color=color))+
+  geom_abline(slope=1,linetype=2,colour="grey")+
+  scale_color_gradient2(low="blue", mid="red", high="yellow",midpoint = 9)+
+  geom_point(size=.5)+
+  geom_label_repel(data=df %>%
+                     filter(padj_Cl_vs_X<0.05) %>%
+                     mutate(label=ifelse(gene_name_Cl_vs_X %in% top50, gene_name_Cl_vs_X, NA)) ,
+                   aes(label=label),
+                   segment.size=.25,segment.alpha=.5,size=2.5,color='black',max.overlaps=25,
+                   label.padding=0.05,label.size=NA) +
+  labs(x="log2FC IY16-HNP1 vs vehicle", y="log2FC ClY21-HNP1 vs vehicle", colour="log10 Padj")+
+  theme_classic()+
+  theme(legend.title=element_text(size=8),
+        legend.key.size=unit(10,"pt"),
+        plot.title=element_text(size=8),
+        axis.title=element_text(size=8),
+        axis.text=element_text(size=8),
+        legend.text=element_text(size=8),legend.position="inside",legend.position.inside=c(.9,.25))
+
+ggsave(file.path(path,results_dir,"bulk_cl_vs_i.pdf"), device = cairo_pdf,width=3,height=3)
+```
+
+
+
+
+
+```{r session}
+
+sessionInfo()
+
+```
+
+

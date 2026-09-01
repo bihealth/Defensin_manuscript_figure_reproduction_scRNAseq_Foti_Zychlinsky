@@ -1,0 +1,132 @@
+---
+title: "01 - Pseudobulk count tables"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+params:
+  annotated_rds: "../data/intermediate/sobj_pbmc_annotated.rds"
+  sample_table: "../sample_tables/sample_table_final12.txt"
+  output_counts_l1: "../data/intermediate/counts_l1.tsv"
+  output_counts_l2: "../data/intermediate/counts_l2.tsv"
+date: "`r Sys.Date()`"
+---
+
+Sums raw counts per (sample x cell type) to build pseudobulk count matrices,
+at both `predicted.celltype.l1` and `predicted.celltype.l2` granularity, plus
+an `all_<sample>` pseudobulk per sample (all cells, any type). Input is the
+annotated object from
+[`../preprocessing/03_annotation_label_transfer.Rmd`](../preprocessing/03_annotation_label_transfer.Rmd)
+(`sobj_pbmc_annotated.rds`, pre-reference-UMAP-merge; NOT the final
+`20250919_pbmc.rds`). Output feeds
+[`02_deseq2_tmod.Rmd`](02_deseq2_tmod.Rmd) (l1 only) and the PCA QC plots below.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(DESeq2)
+})
+source("../R/io_helpers.R")
+dir.create(dirname(params$output_counts_l1), recursive = TRUE, showWarnings = FALSE)
+
+require_files(c(annotated_rds = params$annotated_rds, sample_table = params$sample_table))
+sobj <- readRDS(params$annotated_rds)
+sample_table <- read.delim(params$sample_table)
+```
+
+```{r umap}
+DimPlot(sobj, group.by = "predicted.celltype.l1", reduction = "iUMAPcca", label = TRUE, repel = TRUE) + NoLegend()
+```
+
+```{r pseudobulk fn}
+pseudobulk <- function(sobj, celltype_col) {
+  count_mtx <- GetAssayData(sobj, layer = "counts")
+  cell_types <- sobj[[]] %>% pull(!!celltype_col) %>% unique() %>% as.character()
+  samples <- unique(sobj[[]]$sample)
+
+  expr <- list()
+  for (ct in cell_types) {
+    for (s in samples) {
+      cells <- Cells(sobj)[sobj@meta.data$sample == s & sobj@meta.data[[celltype_col]] == ct]
+      cells <- cells[!is.na(cells)]
+      if (length(cells) > 1) expr[[paste0(ct, "_", s)]] <- rowSums(count_mtx[, cells])
+    }
+  }
+  for (s in samples) {
+    cells <- Cells(sobj)[sobj@meta.data$sample == s]
+    cells <- cells[!is.na(cells)]
+    expr[[paste0("all_", s)]] <- rowSums(count_mtx[, cells])
+  }
+  names(expr) <- gsub(" ", "_", names(expr))
+
+  colData <- data.frame(sample_name = factor(names(expr)),
+                         cell_type = factor(sub("_s.*", "", names(expr))),
+                         sample = factor(sub(".*_s", "s", names(expr)))) %>%
+    left_join(sample_table, by = "sample") %>%
+    mutate(batch = factor(batch))
+
+  counts <- do.call(cbind, expr) %>% as.data.frame() %>% tibble::rownames_to_column("gene_name")
+  list(counts = counts, colData = colData)
+}
+
+flag_low_depth <- function(counts, sample_table, min_reads) {
+  counts_mat <- counts %>% tibble::column_to_rownames("gene_name")
+  lengths <- colSums(counts_mat)
+  df <- data.frame(sample_name = names(lengths), n_reads = lengths) %>%
+    mutate(sample = sub(".*_s", "s", sample_name), celltype = sub("_s.*", "", sample_name)) %>%
+    left_join(sample_table, by = "sample") %>%
+    mutate(batch = factor(batch))
+  print(
+    ggplot(df, aes(group, n_reads, colour = group)) +
+      geom_point(position = position_dodge(width = .5), size = 2) +
+      facet_wrap(~celltype, scales = "free") +
+      theme(axis.text.x = element_blank())
+  )
+  unique(df[df$n_reads < min_reads, "celltype"])
+}
+
+plotPCA_per_celltype <- function(counts, colData, celltype) {
+  cd <- filter(colData, cell_type == celltype)
+  cnt <- unique(cd$sample_name)
+  counts_mat <- counts %>% tibble::column_to_rownames("gene_name")
+  dds <- DESeqDataSetFromMatrix(countData = counts_mat[, cnt], colData = cd, design = ~1) %>% DESeq()
+  rld <- vst(dds)
+  for (cov in c("sample", "group", "batch")) {
+    print(plotPCA(rld, intgroup = cov) + guides(colour = guide_legend(title = cov)) + ggtitle(celltype))
+  }
+}
+```
+
+## Granularity level 1 (used by DE + all figures)
+
+```{r l1}
+res_l1 <- pseudobulk(sobj, "predicted.celltype.l1")
+write.table(res_l1$counts, params$output_counts_l1, quote = FALSE, sep = "\t", row.names = FALSE)
+exclude_l1 <- flag_low_depth(res_l1$counts, sample_table, min_reads = 5e5)
+exclude_l1
+```
+
+```{r l1 pca, results='hide'}
+invisible(lapply(c("all", "Mono"), plotPCA_per_celltype, counts = res_l1$counts, colData = res_l1$colData))
+```
+
+## Granularity level 2 (QC only; not used by downstream DE/figures)
+
+```{r l2}
+res_l2 <- pseudobulk(sobj, "predicted.celltype.l2")
+write.table(res_l2$counts, params$output_counts_l2, quote = FALSE, sep = "\t", row.names = FALSE)
+exclude_l2 <- flag_low_depth(res_l2$counts, sample_table, min_reads = 2e5)
+exclude_l2
+```
+
+```{r l2 pca, results='hide'}
+invisible(lapply(c("all", "CD14_Mono"), plotPCA_per_celltype, counts = res_l2$counts, colData = res_l2$colData))
+```
+
+```{r session info}
+sessionInfo()
+```

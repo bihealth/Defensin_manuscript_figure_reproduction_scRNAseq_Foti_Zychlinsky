@@ -1,0 +1,34 @@
+# rendered figure outputs (large; not needed in version control)
+output/*/*.pdf
+output/*/*.xlsx
+!output/*/.gitkeep
+
+# large downloaded/intermediate data (see data/README.md)
+data/*.rds
+data/*.h5
+data/*.h5seurat
+data/cellbender_h5/
+data/intermediate/
+
+
+# rendered html reports
+*.html
+
+# rmarkdown intermediates (only appear with non-self-contained rendering)
+*.knit.md
+*_files/
+*_cache/
+
+# SLURM logs
+slurm.*.out
+slurm.*.err
+
+# macOS
+._*
+.DS_Store
+
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
