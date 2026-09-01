@@ -14,7 +14,7 @@ params:
   # writing the reproduction there overwrites the ground truth you're
   # trying to reproduce. Diff output_pbmc_rds against ../data/20250919_pbmc.rds
   # by hand once this finishes; only replace the latter deliberately.
-  output_pbmc_rds: "../data/intermediate/20250919_pbmc_reproduced.rds"
+  output_pbmc_rds: "../data/20250919_pbmc_reproduced.rds"
   output_sct_rds: "../data/intermediate/sct_per_sample.rds"
   # If you've ever symlinked this path to a precomputed original (e.g. to
   # unblock differential_expression/01_pseudobulk_count_tables.Rmd without

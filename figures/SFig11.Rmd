@@ -5,7 +5,7 @@ output:
     df_print: paged
     code_folding: hide
 params:
-  pbmc_rds: "../data/intermediate/20250919_pbmc_reproduced.rds"
+  pbmc_rds: "../data/20250919_pbmc.rds"
   sample_table_final12: "../sample_tables/sample_table_final12.txt"
   counts_l1_final12: "SFig11_data/counts_l1_final12.tsv"
   sample_table_full16: "../sample_tables/sample_table_donor3_swap_check.txt"

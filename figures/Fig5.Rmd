@@ -5,7 +5,7 @@ output:
     df_print: paged
     code_folding: hide
 params:
-  pbmc_rds: "../data/intermediate/20250919_pbmc_reproduced.rds"
+  pbmc_rds: "../data/20250919_pbmc.rds"
   de_dir: "../data/intermediate/de_results"
   output_dir: "../output/Fig5"
 date: "`r Sys.Date()`"
