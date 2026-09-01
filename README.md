@@ -21,7 +21,9 @@ Rscript envs/install_r_packages.R
 # download 20250919_pbmc.rds from Zenodo/GEO - see data/README.md
 # then place it at data/20250919_pbmc.rds
 
-rmarkdown::render("figures/Fig5.Rmd")   # or: render/render_figures.sh Fig5
+rmarkdown::render("figures/Fig5.Rmd")   # to run locally
+cd render
+./render_figures.sh Fig5 # to run on SLURM cluster with a batch script
 ```
 
 Every figure Rmd is self-contained and only needs `data/20250919_pbmc.rds`
