@@ -9,7 +9,7 @@ matter only if you want to rebuild the inputs to `preprocessing/` yourself:
   FASTQ files are human-subjects data and are not distributed, and Cell
   Ranger requires proprietary reference files not practical to vendor here.
 - **Step 2, CellBender**: you likely **do need to run this yourself** if
-  you're starting from GEO rather than the Zenodo RDS — the h5 files on GEO
+  you're starting from GEO rather than the figshare RDS — the h5 files on GEO
   are Cell Ranger's raw output, *not* CellBender-denoised (see
   [`../data/README.md`](../data/README.md) section 2). CellBender itself
   (GPU-accelerated, no proprietary inputs) is practical to run outside this

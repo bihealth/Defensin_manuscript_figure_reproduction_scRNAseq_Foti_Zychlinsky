@@ -1,39 +1,45 @@
 # Data
 
-This repo does not vendor any large data files. Two things need to be
-downloaded before rendering:
+This repo does not vendor any of the large source data files (the final RDS,
+raw/CellBender h5s, or the PBMC reference) — those need to be downloaded
+before rendering, as described below. It does vendor the (small) pseudobulk
+DE result tables — see the end of this page.
 
 ## 1. The final annotated Seurat object (required for `differential_expression/` and `figures/`)
 
 **`20250919_pbmc.rds`** — the Seurat v5 object (12 samples, donor 3 excluded,
 label-transfer-annotated) that every manuscript figure was generated from.
 
-- Zenodo DOI: `10.5281/zenodo.XXXXXXX` <!-- TODO: replace once the deposit is minted -->
-- GEO accession: `GSEXXXXXX` <!-- TODO: replace once assigned -->
+Deposited on **figshare**: <https://doi.org/10.6084/m9.figshare.34022952>.
 
-Download it and place it at:
+Download it and place it at `data/20250919_pbmc.rds` (this path is what
+every downstream Rmd's `params$pbmc_rds` defaults to):
 
+```bash
+curl -L -o data/20250919_pbmc.rds https://ndownloader.figshare.com/files/69460476
 ```
-data/20250919_pbmc.rds
-```
 
-(this path is what every downstream Rmd's `params$pbmc_rds` defaults to).
+(~13.2GB; the direct `ndownloader` link above comes from the figshare API
+and downloads the file itself, unlike the DOI link which resolves to the
+HTML landing page).
 
-## 2. CellBender-denoised per-sample count matrices (required only to re-run `preprocessing/`)
+## 2. Processed data (count matrices) — GEO accession GSE344857
 
-Not needed if you only want to reproduce figures from the final RDS above.
-Required only if you want to rebuild `20250919_pbmc.rds` yourself from
-`preprocessing/02_qc_clustering.Rmd` onward, or to reproduce the donor-3
-QC diagnostic (SFig11 A/E, see `docs/donor3_exclusion.md`).
+The processed data underlying the manuscript (per-sample count matrices) are
+deposited at GEO: **[GSE344857](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE344857)**.
+This is only needed if you want to rebuild `20250919_pbmc.rds` yourself from
+`preprocessing/02_qc_clustering.Rmd` onward, or to reproduce the donor-3 QC
+diagnostic (SFig11 A/E, see `docs/donor3_exclusion.md`) — not needed if you
+only want to reproduce figures from the final RDS above.
 
-**The h5 files deposited on the GEO accession are the raw Cell Ranger
-`multi` output, *not* CellBender-denoised.** GEO hosts the per-sample
-supplementary files as produced by Cell Ranger; CellBender's ambient-RNA
-removal was a downstream processing step on top of those and its output was
-not itself deposited. If you're starting from GEO rather than the Zenodo
-RDS, you need to run CellBender yourself on the downloaded Cell Ranger h5
-files before this repo's pipeline can use them — see step 2 ("CellBender")
-in [`../preprocessing/01_upstream_processing.md`](../preprocessing/01_upstream_processing.md)
+**The h5 files deposited at GSE344857 are the raw Cell Ranger `multi`
+output, *not* CellBender-denoised.** GEO hosts the per-sample supplementary
+files as produced by Cell Ranger; CellBender's ambient-RNA removal was a
+downstream processing step on top of those and its output was not itself
+deposited. If you're starting from GEO rather than the figshare RDS, you
+need to run CellBender yourself on the downloaded Cell Ranger h5 files
+before this repo's pipeline can use them — see step 2 ("CellBender") in
+[`../preprocessing/01_upstream_processing.md`](../preprocessing/01_upstream_processing.md)
 for the exact command/parameters used in the original analysis. Only its
 output (`<sample>_filtered_seurat.h5`) is what `preprocessing/02_qc_clustering.Rmd`
 actually reads.
@@ -117,6 +123,18 @@ Note: `SeuratData::InstallData("pbmcref")` downloads a *different* artifact
 (Azimuth's on-disk annoy-index reference, for `Azimuth::RunAzimuth()`) — it
 is not a drop-in for the `FindTransferAnchors`/`MapQuery` pipeline this repo
 uses, so use the `.h5seurat` download above instead.
+
+## What's already included in this repo (no download needed)
+
+Unlike the RDS/h5/reference above, the **pseudobulk DE result tables** —
+[`../differential_expression/de_results/`](../differential_expression/de_results/)
+(6 files, one per pairwise contrast, ~95MB total) — are small enough to
+vendor directly, so they're committed to this repo rather than requiring a
+download or a re-run of `differential_expression/`. `figures/Fig5.Rmd`,
+`SFig12.Rmd`, `SFig13.Rmd`, and `SFig14.Rmd` all default `params$de_dir` to
+that path. See its own README for provenance. This mirrors
+[`../figures/SFig11_data/`](../figures/SFig11_data/), vendored for the same
+reason.
 
 ## What is intentionally NOT here
 

@@ -5,7 +5,7 @@ output:
     df_print: paged
     code_folding: hide
 params:
-  de_dir: "../data/intermediate/de_results"
+  de_dir: "../differential_expression/de_results"
   output_dir: "../output/SFig13"
 date: "`r Sys.Date()`"
 ---

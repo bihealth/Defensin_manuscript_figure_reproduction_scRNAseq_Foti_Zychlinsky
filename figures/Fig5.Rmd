@@ -6,7 +6,7 @@ output:
     code_folding: hide
 params:
   pbmc_rds: "../data/20250919_pbmc.rds"
-  de_dir: "../data/intermediate/de_results"
+  de_dir: "../differential_expression/de_results"
   output_dir: "../output/Fig5"
 date: "`r Sys.Date()`"
 ---
