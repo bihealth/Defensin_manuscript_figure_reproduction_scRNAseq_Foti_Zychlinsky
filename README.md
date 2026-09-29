@@ -54,13 +54,13 @@ preprocessing/01_upstream_processing.md      (documentation only - Cell Ranger +
   -> preprocessing/02_qc_clustering.Rmd
   -> preprocessing/03_annotation_label_transfer.Rmd     -> data/20250919_pbmc.rds
   -> differential_expression/01_pseudobulk_count_tables.Rmd
-  -> differential_expression/02_deseq2_tmod.Rmd         -> differential_expression/de_results/ (vendored - this stage is optional)
+  -> differential_expression/02_deseq2_tmod.Rmd         -> differential_expression/de_results/ (available in this repo - this stage is optional)
   -> figures/{Fig5,SFig11,SFig12,SFig13,SFig14}.Rmd     -> output/
 ```
 
 If you start from `data/20250919_pbmc.rds` (recommended), you only need the
-last stage — the DE result tables the DE stage would produce are already
-vendored in `differential_expression/de_results/`.
+last stage — the DE result tables that the DE stage would produce are already
+available in `differential_expression/de_results/`.
 
 ## Data availability & donor exclusion
 
