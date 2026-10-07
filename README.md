@@ -1,5 +1,7 @@
 # Defensin_manuscript_figure_reproduction_scRNAseq_Foti_Zychlinsky
 
+[![DOI](https://zenodo.org/badge/1347135498.svg)](https://doi.org/10.5281/zenodo.23210106)
+
 Code and supplementary files to reproduce the scRNA-seq figures of:
 
 > **Tyrosine halogenation converts α-defensins into potent immunomodulators**
