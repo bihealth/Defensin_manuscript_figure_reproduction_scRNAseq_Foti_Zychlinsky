@@ -6,7 +6,7 @@ Requires the `defensin_figures` conda env (see
 
 ```bash
 ./render_figures.sh                # render all 5 figures (submits 5 SLURM jobs)
-./render_figures.sh Fig5 SFig12    # render only these
+./render_figures.sh Fig5 SFig13    # render only these
 ```
 
 Each figure is submitted as its own SLURM job (`render_one.sbatch`,

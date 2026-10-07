@@ -9,7 +9,7 @@ see [`../sample_tables/`](../sample_tables/)). One donor — **donor 3**
 ## Published rationale
 
 From the manuscript Methods ("scRNAseq data processing") and the legend of
-Figure S11A:
+Figure S12A:
 
 > During exploratory quality control, donor 3 (vehicle and HNP1 conditions)
 > was identified as an outlier. Pseudo-bulk gene expression profiles from
@@ -22,11 +22,11 @@ Figure S11A:
 > specific library preparation rather than a genuine biological response.
 > Therefore, donor 3 was excluded from downstream analyses.
 
-Figure S11 panel A shows the pseudobulk PCA that first flagged donor 3 as an
+Figure S12 panel A shows the pseudobulk PCA that first flagged donor 3 as an
 outlier (all 16 samples); panel E shows the same style of PCA after
-exclusion, on the final 12-sample set. `figures/SFig11.Rmd` reproduces both
+exclusion, on the final 12-sample set. `figures/SFig12.Rmd` reproduces both
 directly from two vendored, precomputed pseudobulk count tables (see
-[`../figures/SFig11_data/README.md`](../figures/SFig11_data/README.md)) — no
+[`../figures/SFig12_data/README.md`](../figures/SFig12_data/README.md)) — no
 preprocessing re-run is needed.
 
 ## Internal investigation note (not stated in the manuscript text)
@@ -44,7 +44,7 @@ transparency about what was tried before the exclusion decision.
 
 The only 16-sample pseudobulk run that exists in the original analysis used
 this swap-check table (there is no equivalent run using the original,
-unswapped assignment), which is why `figures/SFig11.Rmd` panel A pairs its
+unswapped assignment), which is why `figures/SFig12.Rmd` panel A pairs its
 count table with `sample_table_donor3_swap_check.txt` rather than
 `sample_table_full16.txt`. This does not change what the panel shows — the
 outlier signal is a property of the physical donor-3 samples, not of which
@@ -57,6 +57,6 @@ barcode is labeled `X` vs `UM`.
   every figure Rmd in this repo.
 - `sample_tables/sample_table_full16.txt` documents the original 16-sample
   design; it is not merged into the final Seurat object and is not needed to
-  render any figure (SFig11 uses the swap-check table instead, see above).
+  render any figure (SFig12 uses the swap-check table instead, see above).
   It is only relevant if you want to rebuild the donor-3-outlier count table
   from scratch, from `preprocessing/`, rather than using the vendored one.

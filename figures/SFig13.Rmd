@@ -10,17 +10,16 @@ params:
 date: "`r Sys.Date()`"
 ---
 
-"HNP1 and halo-HNP1s induce specific genes upregulation." Panel A: overlap
-of monocyte DE genes (padj<0.05) between the three vs-vehicle contrasts.
-Panel B: the corresponding volcano plots.
+"HNPs upregulate proinflammatory genes" - tmod BTM gene set enrichment per
+cell type for the three vs-vehicle contrasts (AUC > 0.70, q < 1e-10, as
+stated in the figure legend).
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
 suppressPackageStartupMessages({
   library(dplyr)
-  library(tidyr)
-  library(stringr)
   library(patchwork)
+  library(tmod)
 })
 source("../R/plot_theme.R")
 source("../R/io_helpers.R")
@@ -28,84 +27,50 @@ source("../R/panel_helpers.R")
 
 de <- load_de_results(params$de_dir)
 res_by_contrast <- de$by_contrast
+data(tmod)
 ```
 
-## A - DE gene overlap (Monocytes), UM/Cl/I vs vehicle
-
-```{r panel A, fig.width=4, fig.height=3}
-vs_vehicle <- c("UM_vs_X", "Cl_vs_X", "I_vs_X")
-topgenes <- lapply(res_by_contrast[vs_vehicle], function(x) {
-  x %>% filter(!grepl("DEPRECATED", gene_name), !grepl("^ENSG", gene_name), padj < 0.05, cell_type == "Mono") %>% pull(gene_name)
-})
-
-isec_all3 <- Reduce(intersect, topgenes)
-isec_cl_um <- intersect(topgenes$Cl_vs_X, topgenes$UM_vs_X)
-isec_i_um <- intersect(topgenes$I_vs_X, topgenes$UM_vs_X)
-isec_cl_i <- intersect(topgenes$Cl_vs_X, topgenes$I_vs_X)
-
-combs <- c("UM_vs_X", "Cl_vs_X", "I_vs_X", "Cl_vs_X_and_I_vs_X", "Cl_vs_X_and_UM_vs_X",
-           "I_vs_X_and_UM_vs_X", "Cl_vs_X_and_I_vs_X_and_UM_vs_X")
-data_a <- data.frame(
-  combination = factor(combs, levels = combs),
-  n = c(length(unique(topgenes$UM_vs_X)), length(unique(topgenes$Cl_vs_X)), length(unique(topgenes$I_vs_X)),
-        length(isec_cl_i), length(isec_cl_um), length(isec_i_um), length(isec_all3))
-)
-counts_of_subjects <- data.frame(subject = vs_vehicle,
-                                  counts = c(length(unique(topgenes$UM_vs_X)), length(unique(topgenes$Cl_vs_X)), length(unique(topgenes$I_vs_X))))
-
-subj_labs <- setNames(c("HNP vs \nvehicle", "Cl21-HNP vs \nvehicle", "IY16-HNP vs \nvehicle"), vs_vehicle)
-
-bars <- data_a %>%
-  ggplot(aes(x = combination, y = n)) +
-  geom_col(width = 0.6, fill = "dodgerblue4") +
-  geom_text(aes(label = paste0("n=", n)), vjust = -.5, size = 2.5) +
-  coord_cartesian(ylim = c(0, 2000)) +
-  theme_minimal(base_size = 8) +
-  theme(axis.text.x = element_blank(), panel.grid.major.x = element_blank()) +
-  labs(x = NULL, y = "# genes with Padj < 0.05")
-
-dots <- data_a %>%
-  mutate(subjects = purrr::map(combination, ~str_split_1(as.character(.), "_and_"))) %>%
-  unnest(subjects) %>%
-  mutate(subjects = factor(subjects, levels = counts_of_subjects %>% arrange(counts) %>% pull(subject))) %>%
-  ggplot(aes(x = combination, y = subjects)) +
-  geom_line(aes(group = combination), col = "dodgerblue4") +
-  geom_point(size = 4, col = "dodgerblue4") +
-  scale_x_discrete(drop = FALSE) +
-  theme_minimal(base_size = 8) +
-  theme(axis.text.x = element_blank(), panel.grid.major.x = element_blank()) +
-  labs(x = NULL, y = NULL) +
-  scale_y_discrete(labels = subj_labs)
-
-panel_a <- bars / dots + plot_layout(heights = c(1, 0.5))
+```{r panels, fig.width=8, fig.height=3}
+panel_a <- tmod_panel_by_celltype(res_by_contrast, "UM_vs_X", q_filter = 1e-10, auc_filter = 0.7, title = "HNP1 vs vehicle")
+panel_b <- tmod_panel_by_celltype(res_by_contrast, "Cl_vs_X", q_filter = 1e-10, auc_filter = 0.7, title = "ClY21-HNP1 vs vehicle")
+panel_c <- tmod_panel_by_celltype(res_by_contrast, "I_vs_X", q_filter = 1e-10, auc_filter = 0.7, title = "IY16-HNP1 vs vehicle")
 panel_a
+panel_b
+panel_c
 ```
 
-## B - Monocyte volcano plots, UM/Cl/I vs vehicle
-
-```{r panel B, fig.width=4, fig.height=3}
-panel_b1 <- volcano_panel(res_by_contrast, "UM_vs_X", "Mono", max_overlaps = 80)
-panel_b2 <- volcano_panel(res_by_contrast, "Cl_vs_X", "Mono", max_overlaps = 80)
-panel_b3 <- volcano_panel(res_by_contrast, "I_vs_X", "Mono", max_overlaps = 80)
-panel_b1 | panel_b2 | panel_b3
-
-data_b <- bind_rows(lapply(vs_vehicle, function(cn) {
-  res_by_contrast[[cn]] %>% filter(!is.na(padj), baseMean > 5, cell_type == "Mono")
-}))
-```
-
-```{r assembly, fig.width=8, fig.height=6}
-sfig13 <- (wrap_elements(panel_a) + plot_spacer()) /
-  (wrap_elements((panel_b1 | panel_b2 | panel_b3) + plot_layout(guides = "collect"))) +
+```{r assembly, fig.width=8, fig.height=9}
+sfig13 <- wrap_elements(panel_a) / wrap_elements(panel_b) / wrap_elements(panel_c) +
   plot_annotation(tag_levels = "A") &
   theme(plot.tag = element_text(size = 8, face = "bold", hjust = -.5, vjust = 0))
 sfig13
 ```
 
+```{r panel data}
+tmod_panel_data <- function(contrast, q_filter, auc_filter) {
+  # Mirrors tmod_panel_by_celltype()'s filter_row_q/filter_row_auc row
+  # selection (R/panel_helpers.R, same q_filter/auc_filter values passed to
+  # ggPanelplot() there) - a module (row) is kept, across every cell type
+  # column, if it passes the threshold in at least one cell type; previously
+  # this kept an entire cell type's full, unfiltered module list as soon as
+  # *any* one module in it passed, which is a much larger set than what the
+  # heatmap actually draws as rows.
+  l <- res_by_contrast[[contrast]] %>% filter(cell_type != "all") %>% split(.$cell_type)
+  lgenes <- lapply(l, function(x) x %>% filter(!is.na(padj)) %>% arrange(pvalue) %>% pull(gene_name))
+  res.tmod <- lapply(lgenes, tmodCERNOtest, mset = tmod)
+  combined <- Map(cbind, res.tmod, cell_type = names(res.tmod)) %>% bind_rows()
+  keep_ids <- combined %>% filter(adj.P.Val < q_filter, AUC > auc_filter) %>% pull(ID) %>% unique()
+  combined %>% filter(ID %in% keep_ids)
+}
+data_a <- tmod_panel_data("UM_vs_X", 1e-10, 0.7)
+data_b <- tmod_panel_data("Cl_vs_X", 1e-10, 0.7)
+data_c <- tmod_panel_data("I_vs_X", 1e-10, 0.7)
+```
+
 ```{r save}
-save_figure_pdf(sfig13, file.path(params$output_dir, "SFig13.pdf"), width = 8, height = 6)
+save_figure_pdf(sfig13, file.path(params$output_dir, "SFig13.pdf"), width = 8, height = 9)
 write_panel_xlsx(
-  list(A_upset_Mono = data_a, B_volcano_vsvehicle_Mono = data_b),
+  list(A_tmod_UMvsX = data_a, B_tmod_ClvsX = data_b, C_tmod_IvsX = data_c),
   file.path(params$output_dir, "SFig13_data.xlsx")
 )
 ```

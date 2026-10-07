@@ -2,13 +2,13 @@
 # Render all figures, or a user-specified subset, on a SLURM cluster.
 #
 #   ./render_figures.sh                                  # all 5 figures
-#   ./render_figures.sh Fig5 SFig12                       # only these
+#   ./render_figures.sh Fig5 SFig13                       # only these
 #   CONDA_ENV=seurat5_voltron ./render_figures.sh Fig5    # smoke-test against an existing env
 #   MEM=300GB ./render_figures.sh Fig5                    # more memory than the 150GB default
 set -euo pipefail
 cd "$(dirname "$0")"
 
-ALL_FIGURES=(Fig5 SFig11 SFig12 SFig13 SFig14)
+ALL_FIGURES=(Fig5 SFig12 SFig13 SFig14 SFig15)
 
 if [ $# -eq 0 ]; then
   targets=("${ALL_FIGURES[@]}")

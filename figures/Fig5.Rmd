@@ -61,7 +61,7 @@ data_b <- long_res %>% filter(!grepl("DEPRECATED", gene_name), !grepl("^ENSG", g
 
 ```{r panel CDE, fig.width=8, fig.height=3}
 # volcano_panel() hides its own legend by default (legend.position="none",
-# shared with SFig13 B's use of the same function) since the paper shows one
+# shared with SFig14 B's use of the same function) since the paper shows one
 # shared padj<0.05 legend for the whole 3-panel row instead of one per
 # panel. Turn panel_c's legend back on and let plot_layout(guides="collect")
 # gather it once for all three - panel_d/e are left as-is (no legend) so

@@ -14,7 +14,7 @@ suppressPackageStartupMessages({
 })
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
-#' Single-contrast volcano plot for one cell type (Fig5 C-E, SFig13 B).
+#' Single-contrast volcano plot for one cell type (Fig5 C-E, SFig14 B).
 volcano_panel <- function(res_by_contrast, contrast, cell_type, title = NULL,
                            xlim = c(-4, 4), max_overlaps = 80) {
   d <- res_by_contrast[[contrast]] %>% filter(!is.na(padj), baseMean > 5, cell_type == !!cell_type)
@@ -54,7 +54,7 @@ deg_count_bar <- function(long_res, exclude_cell_type = "all") {
 
 #' Two-contrast log2FC-vs-log2FC concordance scatter for one cell type.
 #' style = "gradient_top30": colour = -log10(padj_y) for the top 30
-#'   concordance-ranked genes, which are also labeled (SFig14 A-C).
+#'   concordance-ranked genes, which are also labeled (SFig15 A-C).
 #' style = "highlight": grey background dots, a fixed `highlight_genes` list
 #'   shown as red dots with labels, no colour gradient (Fig5 G-H).
 concordance_scatter <- function(res_by_contrast, contrast_x, contrast_y, cell_type,
@@ -106,7 +106,7 @@ concordance_scatter <- function(res_by_contrast, contrast_x, contrast_y, cell_ty
 }
 
 #' tmod BTM enrichment heatmap for one contrast, split across cell types
-#' (SFig12 A-C). `data(tmod)` must already be loaded by the caller.
+#' (SFig13 A-C). `data(tmod)` must already be loaded by the caller.
 tmod_panel_by_celltype <- function(res_by_contrast, contrast, q_filter, auc_filter, title = NULL) {
   l <- res_by_contrast[[contrast]] %>% filter(cell_type != "all") %>% split(.$cell_type)
   genes <- lapply(l, function(x) x %>% filter(!is.na(padj)) %>% arrange(pvalue))

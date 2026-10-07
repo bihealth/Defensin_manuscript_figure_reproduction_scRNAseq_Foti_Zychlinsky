@@ -1,9 +1,9 @@
-# SFig11 precomputed pseudobulk count tables
+# SFig12 precomputed pseudobulk count tables
 
-`SFig11.Rmd`'s panels A and E are each a pseudobulk PCA built from a
+`SFig12.Rmd`'s panels A and E are each a pseudobulk PCA built from a
 different sample set. Both underlying count tables are small (<10 MB) and
 already existed as output of the original analysis, so they are vendored
-here directly — reproducing SFig11 needs no preprocessing re-run at all.
+here directly — reproducing SFig12 needs no preprocessing re-run at all.
 
 | File | Paired sample table | Samples | Used for |
 |---|---|---|---|

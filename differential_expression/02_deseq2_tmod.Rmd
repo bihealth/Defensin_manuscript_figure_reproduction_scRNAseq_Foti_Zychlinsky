@@ -129,7 +129,7 @@ res_df %>%
 ## QC: tmod (BTM) gene set enrichment per contrast, all cell types
 
 Same thresholding used for the manuscript's enrichment figures (Fig 5F,
-SFig12): `AUC > 0.70`. This QC pass uses a lenient q cutoff just to preview
+SFig13): `AUC > 0.70`. This QC pass uses a lenient q cutoff just to preview
 which modules turn up; each figure Rmd applies the exact per-panel q
 threshold stated in its legend.
 

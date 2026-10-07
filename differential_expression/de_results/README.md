@@ -4,7 +4,7 @@ The 6 pairwise DESeq2 result tables produced by
 [`../02_deseq2_tmod.Rmd`](../02_deseq2_tmod.Rmd) from `data/20250919_pbmc.rds`
 (via [`../01_pseudobulk_count_tables.Rmd`](../01_pseudobulk_count_tables.Rmd)).
 Vendored here directly (~95MB total, well within what's reasonable to commit)
-so that `figures/Fig5.Rmd`, `SFig12.Rmd`, `SFig13.Rmd`, and `SFig14.Rmd` can
+so that `figures/Fig5.Rmd`, `SFig13.Rmd`, `SFig14.Rmd`, and `SFig15.Rmd` can
 render without first re-running the DE pipeline — all four default
 `params$de_dir` to this directory.
 

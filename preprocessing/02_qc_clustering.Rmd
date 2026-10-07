@@ -24,9 +24,9 @@ to [`03_annotation_label_transfer.Rmd`](03_annotation_label_transfer.Rmd).
 
 By default this renders the final 12-sample analysis (`sample_table_final12.txt`,
 donor 3 already excluded) that every figure in this repo is built on.
-SFig11's donor-3-outlier diagnostic (panels A/E) does **not** need this Rmd
+SFig12's donor-3-outlier diagnostic (panels A/E) does **not** need this Rmd
 re-run — it uses precomputed pseudobulk count tables already vendored in
-[`../figures/SFig11_data/`](../figures/SFig11_data/). Re-running this Rmd
+[`../figures/SFig12_data/`](../figures/SFig12_data/). Re-running this Rmd
 with `params$sample_table` pointed at `../sample_tables/sample_table_full16.txt`
 (and `params$output_rds` changed to avoid overwriting the default output) is
 only needed if you want to rebuild that diagnostic from scratch instead —

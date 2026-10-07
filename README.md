@@ -42,7 +42,7 @@ to run.
 | [`preprocessing/`](preprocessing/) | h5 -> QC/clustering -> label transfer -> `20250919_pbmc.rds` (documents Cell Ranger/CellBender too, non-runnable) |
 | [`differential_expression/`](differential_expression/) | Pseudobulk aggregation + DESeq2 + tmod gene set enrichment. Its output, the 6 DE result tables, is vendored in `differential_expression/de_results/` (see its README) so figures don't need this stage re-run |
 | [`R/`](R/) | Shared plotting/IO helpers used by every figure Rmd |
-| [`figures/`](figures/) | One Rmd per figure: `Fig5.Rmd`, `SFig11.Rmd`, `SFig12.Rmd`, `SFig13.Rmd`, `SFig14.Rmd`. `SFig11.Rmd` additionally ships small precomputed inputs in `figures/SFig11_data/` (see its README) so it needs no preprocessing re-run |
+| [`figures/`](figures/) | One Rmd per figure: `Fig5.Rmd`, `SFig12.Rmd`, `SFig13.Rmd`, `SFig14.Rmd`, `SFig15.Rmd`. `SFig12.Rmd` additionally ships small precomputed inputs in `figures/SFig12_data/` (see its README) so it needs no preprocessing re-run |
 | [`render/`](render/) | Render all figures, or a chosen subset, on a SLURM cluster |
 | [`output/`](output/) | Rendered PDFs + one multi-sheet xlsx per figure (one sheet per panel), gitignored |
 | `legacy/` | Superseded/exploratory scripts from the original analysis, kept only for historical reference - not part of the reproduction pipeline |
@@ -55,7 +55,7 @@ preprocessing/01_upstream_processing.md      (documentation only - Cell Ranger +
   -> preprocessing/03_annotation_label_transfer.Rmd     -> data/20250919_pbmc.rds
   -> differential_expression/01_pseudobulk_count_tables.Rmd
   -> differential_expression/02_deseq2_tmod.Rmd         -> differential_expression/de_results/ (available in this repo - this stage is optional)
-  -> figures/{Fig5,SFig11,SFig12,SFig13,SFig14}.Rmd     -> output/
+  -> figures/{Fig5,SFig12,SFig13,SFig14,SFig15}.Rmd     -> output/
 ```
 
 If you start from `data/20250919_pbmc.rds` (recommended), you only need the

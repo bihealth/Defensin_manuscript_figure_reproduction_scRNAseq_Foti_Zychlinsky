@@ -29,7 +29,7 @@ The processed data underlying the manuscript (per-sample count matrices) are
 deposited at GEO: **[GSE344857](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE344857)**.
 This is only needed if you want to rebuild `20250919_pbmc.rds` yourself from
 `preprocessing/02_qc_clustering.Rmd` onward, or to reproduce the donor-3 QC
-diagnostic (SFig11 A/E, see `docs/donor3_exclusion.md`) — not needed if you
+diagnostic (SFig12 A/E, see `docs/donor3_exclusion.md`) — not needed if you
 only want to reproduce figures from the final RDS above.
 
 **The h5 files deposited at GSE344857 are the raw Cell Ranger `multi`
@@ -131,9 +131,9 @@ Unlike the RDS/h5/reference above, the **pseudobulk DE result tables** —
 (6 files, one per pairwise contrast, ~95MB total) — are small enough to
 vendor directly, so they're committed to this repo rather than requiring a
 download or a re-run of `differential_expression/`. `figures/Fig5.Rmd`,
-`SFig12.Rmd`, `SFig13.Rmd`, and `SFig14.Rmd` all default `params$de_dir` to
+`SFig13.Rmd`, `SFig14.Rmd`, and `SFig15.Rmd` all default `params$de_dir` to
 that path. See its own README for provenance. This mirrors
-[`../figures/SFig11_data/`](../figures/SFig11_data/), vendored for the same
+[`../figures/SFig12_data/`](../figures/SFig12_data/), vendored for the same
 reason.
 
 ## What is intentionally NOT here
