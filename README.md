@@ -6,7 +6,7 @@ Code and supplementary files to reproduce the scRNA-seq figures of:
 > Foti et al., *Science* (in press). <!-- TODO: full citation + DOI once published -->
 
 This repo reproduces every scRNA-seq panel in the manuscript: **Figure 5**
-(panels A-H), **Supplementary Figures 11-14** (all panels). 
+(panels A-H), **Supplementary Figures 12-15** (all panels). 
 
 ## Quickstart
 
